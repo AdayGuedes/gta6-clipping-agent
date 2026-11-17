@@ -7,7 +7,7 @@
   `python -m pytest` sobre Python 3.11. No usa secretos.
 - `requirements.txt` con `pydantic`, `pytest`, `ruff` y `black`.
 - D8 en `docs/DECISIONS.md` y entrada en `[Unreleased]` del CHANGELOG.
-- `black` reformateó una línea de `tests/test_estructura_fase0.py` para que
+- `black` reformateó una línea de `tests/test_structure_phase0.py` para que
   `black --check .` pasara.
 - README: la puesta en marcha instala `requirements.txt` y lista las mismas
   comprobaciones que el CI.
