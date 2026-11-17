@@ -41,6 +41,40 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   una lista JSON de momentos propuestos. Es una restricción permanente, no
   solo del v0.
 
+## D5 · 2026-11-17 · Resolución de las preguntas abiertas de la SPEC
+
+- **Decisión:** el arquitecto resuelve las 6 preguntas abiertas que listaba la
+  sección 12 de la SPEC:
+  1. **Formatos de entrada (fase 1).** Las claves canónicas son las de las
+     interfaces: transcripción JSON/CSV con `start_s, end_s, text` y chat con
+     `t_s, message`. Los tiempos se aceptan como número en segundos o como
+     texto `"HH:MM:SS"`, y el cargador los normaliza a segundos. Si un fichero
+     trae otras claves, el cargador falla con un error que dice qué esperaba.
+  2. **Puntos dentro de cada tramo.** Interpolación lineal. Por ejemplo, x2,0
+     está a la mitad del tramo x1,5-x2,5, así que da la mitad de 11-20: 15-16
+     puntos. En el tramo alto satura: x4 = 28 y x6 o más = 30. Por debajo de
+     x1,0 = 0.
+  3. **"Hasta 15 s después".** Cuenta desde el fin de la ventana de 60 s del
+     pico, no desde su inicio. Ventana candidata =
+     `[inicio del pico − 60 s, fin del pico + 15 s]`.
+  4. **Picos cercanos.** Si dos ventanas candidatas se solapan o quedan a menos
+     de 120 s, se fusionan en una, con la unión de tiempos y los puntos del
+     pico mayor.
+  5. **Mediana 0.** La línea base pasa a ser la media. Si la media también es
+     0, el sistema falla con el error explícito "chat sin actividad
+     suficiente"; no se inventan puntuaciones.
+  6. **Evaluación (fase 4, no bloquea ahora).** La referencia son los 10 clips
+     más vistos de Twitch de ese VOD, aportados a mano en un JSON con sus
+     tiempos. Automatizar su obtención queda fuera del v0.
+- **Por qué:** las fases 1 y 2 necesitan estos criterios para implementarse sin
+  decidir sobre la marcha, y las decisiones de arquitectura no se toman en el
+  código.
+- **Implica:** la SPEC incorpora cada resolución en su sección (4, 7.1, 10 y
+  11) y la sección 12 conserva solo la pregunta 6. Los cargadores de la fase 1
+  validan claves y normalizan tiempos; el generador de candidatos de la fase 2
+  implementa la interpolación, la ventana, la fusión y la regla de línea base;
+  la fase 4 evalúa contra un JSON manual.
+
 ## Propuestas
 
 Ninguna por ahora.

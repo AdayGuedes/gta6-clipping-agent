@@ -1,6 +1,6 @@
 # SPEC v0 — gta6-clipping-agent
 
-Versión: v0 · Fecha: 2026-11-17
+Versión: v0 · Fecha: 2026-11-17 · Revisada con D5 (ver docs/DECISIONS.md)
 
 ## 1. Contexto
 
@@ -35,8 +35,20 @@ Todos los tiempos van en segundos desde el inicio del directo.
 | `segments`    | `[{start_s, end_s, text}]`     | transcripción por trozos       |
 | `chat_events` | `[{t_s, message}]`             | mensajes de chat con timestamp |
 
-Los ficheros de origen (transcripción y chat en JSON/CSV) se convierten a
-estas interfaces en los cargadores de la fase 1.
+### 4.1 Ficheros de origen (fase 1)
+
+Los ficheros de origen, en JSON o CSV, se convierten a las interfaces internas
+en los cargadores de la fase 1. Sus claves canónicas son las de las
+interfaces:
+
+- Transcripción: `start_s`, `end_s`, `text`.
+- Chat: `t_s`, `message`.
+
+Los tiempos se aceptan como número en segundos o como texto `"HH:MM:SS"`. El
+cargador los normaliza siempre a segundos.
+
+Si un fichero trae otras claves, el cargador falla con un error que dice qué
+claves esperaba.
 
 ## 5. Salida
 
@@ -100,22 +112,40 @@ La mide el código contando mensajes del chat. El LLM nunca la estima.
 
 - Ventanas de 60 segundos.
 - Línea base = mediana de mensajes/minuto de todo el VOD.
+  - Si la mediana es 0, la línea base pasa a ser la media.
+  - Si la media también es 0, el sistema falla con el error explícito "chat
+    sin actividad suficiente". No se inventan puntuaciones.
 - Multiplicador de una ventana = mensajes/minuto de la ventana / línea base.
-- Puntos según el multiplicador:
+- Puntos según el multiplicador, con interpolación lineal dentro de cada
+  tramo:
 
-| Multiplicador   | Puntos |
-|-----------------|--------|
-| ≤ x1.5          | 0-10   |
-| x1.5 – x2.5     | 11-20  |
-| x2.5 – x4       | 21-27  |
-| > x4            | 28-30  |
+| Multiplicador   | Puntos                         |
+|-----------------|--------------------------------|
+| < x1.0          | 0                              |
+| x1.0 – x1.5     | 0 → 10                         |
+| x1.5 – x2.5     | 11 → 20                        |
+| x2.5 – x4       | 21 → 27                        |
+| x4 – x6         | 28 → 30                        |
+| ≥ x6            | 30 (satura)                    |
+
+Ejemplo: x2.0 está a la mitad del tramo x1.5 – x2.5, así que da la mitad de
+11-20: 15-16 puntos. En el tramo alto, x4 = 28 y x6 o más = 30.
 
 **Corrección del retraso del chat.** El pico de chat llega 5-20 s DESPUÉS del
-momento. La ventana candidata va desde 60 s antes del inicio del pico hasta
-15 s después.
+momento. El pico es una ventana de 60 s, y la ventana candidata se mide desde
+sus extremos:
 
-**Selección de candidatos.** Se fusionan los picos cercanos y se quedan los
-15-20 mejores, cada uno con sus puntos de `reaccion_chat` ya calculados.
+```
+ventana candidata = [inicio del pico − 60 s, fin del pico + 15 s]
+```
+
+Los 15 s se cuentan después del fin de la ventana de 60 s del pico, no después
+de su inicio.
+
+**Selección de candidatos.** Si dos ventanas candidatas se solapan o quedan a
+menos de 120 s, se fusionan en una, con la unión de tiempos y los puntos del
+pico mayor. Después se quedan los 15-20 mejores, cada uno con sus puntos de
+`reaccion_chat` ya calculados.
 
 ### 7.2 Criterios que juzga Claude
 
@@ -152,27 +182,23 @@ python -m src.main --transcript <fichero> --chat <fichero> --out resultados.json
 ## 10. Criterios de aceptación del v0
 
 - Procesa un VOD real de 2-3 h sin romperse por longitud.
-- Evaluación: los 5 momentos se comparan contra los clips más creados por la
-  audiencia de ese mismo VOD en Twitch. Acierto = solape de ±60 s.
+- Evaluación (fase 4): los 5 momentos se comparan contra los 10 clips más
+  vistos de Twitch de ese mismo VOD. Esa referencia se aporta a mano en un
+  JSON con los tiempos de cada clip. Acierto = solape de ±60 s.
 
 ## 11. Fuera de alcance en v0
 
 - Modo en directo: previsto para v3, sobre el mismo detector.
 - Edición de vídeo: v1.
+- Automatizar la obtención de los clips de referencia de Twitch: en v0 se
+  aportan a mano.
 - Publicación de cualquier tipo: permanentemente fuera. La subida es manual.
 
 ## 12. Preguntas abiertas
 
-Puntos que la spec no fija. Se resuelven antes de la fase indicada y la
-respuesta se registra en docs/DECISIONS.md.
+Las demás preguntas quedaron resueltas en D5 (docs/DECISIONS.md) y se
+incorporaron a las secciones 4 y 7.1. Queda solo:
 
-1. **Fase 1:** columnas y claves exactas de los ficheros JSON/CSV de
-   transcripción y chat.
-2. **Fase 2:** cómo se reparten los puntos dentro de cada tramo de reacción
-   (por ejemplo, interpolación lineal según el multiplicador).
-3. **Fase 2:** "hasta 15 s después": ¿del inicio del pico o del final del pico?
-4. **Fase 2:** qué distancia cuenta como "picos cercanos" para fusionarlos.
-5. **Fase 2:** qué hacer si la mediana de mensajes/minuto es 0 (chat muy
-   tranquilo), porque el multiplicador dividiría entre 0.
 6. **Fase 4:** cuántos clips de Twitch se usan como referencia en la
-   evaluación y cómo se consiguen.
+   evaluación y cómo se consiguen. **Resuelta para fase 4, método manual:**
+   10 clips más vistos, aportados a mano en un JSON (sección 10).
