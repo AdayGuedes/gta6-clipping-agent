@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - [NO-REF] Add GitHub Actions CI with ruff, black and pytest
+- [NO-REF] Add pydantic models and JSON/CSV loaders for transcript and chat
 
 ### Changed
 
