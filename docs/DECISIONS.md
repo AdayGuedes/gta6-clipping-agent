@@ -125,6 +125,23 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   `pydantic` y `pytest`, con su configuración por defecto. El workflow vive en
   `.github/workflows/ci.yml`.
 
+## D10 · 2026-11-17 · Umbral de candidato x1,5 y tope de 20 candidatos
+
+- **Decisión:**
+  - Un minuto del chat genera candidato solo si su multiplicador es mayor o
+    igual que x1,5.
+  - El generador devuelve como máximo 20 candidatos, ordenados por puntos de
+    reacción de mayor a menor y, a igualdad, por inicio ascendente.
+- **Por qué:** la SPEC 7.1 pide quedarse con "los 15-20 mejores", pero no fija
+  qué minuto cuenta como pico ni el número exacto. x1,5 es donde empieza el
+  tramo de 11-20 puntos de la tabla: por debajo, la reacción vale como mucho
+  10 de 30 puntos y no justifica gastar una llamada al juez. El tope de 20 es
+  el extremo alto del rango de la SPEC y acota el coste de la fase 3.
+- **Implica:** `src/peaks.py` fija `CANDIDATE_MIN_MULTIPLIER = 1.5` y
+  `MAX_CANDIDATES = 20`. Un VOD con pocos picos puede dar menos de 15
+  candidatos, o ninguno si el chat es uniforme; no se rellenan con minutos por
+  debajo del umbral.
+
 ## Propuestas
 
 Ninguna por ahora.

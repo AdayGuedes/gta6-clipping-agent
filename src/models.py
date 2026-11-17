@@ -43,6 +43,20 @@ class ChatEvent(_Model):
     message: str
 
 
+class Candidate(_Model):
+    start_s: Seconds
+    end_s: Seconds
+    msg_min: int = Field(ge=0)
+    multiplier: NonNegative
+    reaction_points: float = Field(ge=0, le=30, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> "Candidate":
+        if self.end_s <= self.start_s:
+            raise ValueError("end_s must be greater than start_s")
+        return self
+
+
 class Breakdown(_Model):
     reaccion_chat: int = Field(ge=0, le=30)
     contexto: int = Field(ge=0, le=25)
