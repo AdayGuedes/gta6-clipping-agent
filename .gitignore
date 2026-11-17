@@ -1,0 +1,8 @@
+# Secretos: nunca se commitean
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
