@@ -92,6 +92,24 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   Además, `CHANGELOG.md` pasa a ser convención propia del proyecto: toda PR
   añade su entrada en `## [Unreleased]` antes de fusionarse.
 
+## D7 · 2026-11-17 · Convenciones del proyecto y separación de herramientas locales
+
+- **Decisión:**
+  1. Los mensajes de commit van en inglés desde la fase 1. La documentación
+     sigue en español.
+  2. Ninguna regla no commiteada gobierna el proyecto. El bloque de
+     convenciones que un plugin añade al `CLAUDE.md` local sale del fichero
+     seguido y pasa a `CLAUDE.local.md`, que no se commitea.
+  3. `.gitignore` añade `CLAUDE.local.md` y `.claude/`.
+- **Por qué:** lo que gobierna el proyecto tiene que estar en el repo, donde
+  cualquiera lo puede leer y revisar. Lo que añade la herramienta local de una
+  persona queda fuera del historial.
+- **Implica:** `CLAUDE.md` es la única fuente commiteada de reglas
+  (restricciones duras, método de trabajo, flujo de ramas y CHANGELOG de D6).
+  `CLAUDE.local.md` es un ajuste personal y no obliga al proyecto. La
+  estructura descrita en `CLAUDE.md` incorpora `requirements.txt`, que llega en
+  la fase 1 con `pydantic` y `pytest` solamente.
+
 ## Propuestas
 
 Ninguna por ahora.

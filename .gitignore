@@ -6,3 +6,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Herramientas locales: no se commitean
+CLAUDE.local.md
+.claude/

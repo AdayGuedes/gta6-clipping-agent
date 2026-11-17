@@ -48,6 +48,7 @@ SPEC.md            spec v0
 PROGRESS.md        estado de las fases
 README.md          qué es y cómo se arranca
 .env.example       variables de entorno sin valores (.env nunca se commitea)
+requirements.txt   dependencias de Python
 docs/DECISIONS.md  decisiones fechadas y propuestas fuera de alcance
 docs/sessions/     una nota por fase cerrada
 src/               código
