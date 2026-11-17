@@ -75,6 +75,23 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   implementa la interpolación, la ventana, la fusión y la regla de línea base;
   la fase 4 evalúa contra un JSON manual.
 
+## D6 · 2026-11-17 · Flujo de ramas y PRs por fase
+
+- **Decisión:**
+  - Cada fase trabaja en su propia rama, con nombre `fase-N/descripcion-corta`
+    (por ejemplo, `fase-1/modelos-ingesta`).
+  - Claude Code abre la PR contra `main` con `gh`.
+  - La fusión la hace solo una persona, con los tests en verde.
+  - Excepción: los cambios que solo tocan documentación van directos a `main`.
+  - No hay protección dura de rama en GitHub por ahora.
+- **Por qué:** una fase, una rama y una PR dejan cada fase revisable por
+  separado, y la fusión humana mantiene la aprobación del arquitecto. La
+  excepción evita abrir una PR por cada cambio de documentación.
+- **Implica:** CLAUDE.md resume el flujo en "Método de trabajo". Claude Code
+  nunca fusiona. Sin protección de rama, la regla se sostiene por convención.
+  Además, `CHANGELOG.md` pasa a ser convención propia del proyecto: toda PR
+  añade su entrada en `## [Unreleased]` antes de fusionarse.
+
 ## Propuestas
 
 Ninguna por ahora.

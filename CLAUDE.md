@@ -68,3 +68,16 @@ tests/             tests (pytest)
   3. nota en `docs/sessions/AAAA-MM-DD-fase-N.md` con qué se hizo, tests,
      errores y la lección en una frase;
   4. un commit separado para la fase.
+- Flujo de ramas y PRs (D6):
+  - Cada fase va en su rama `fase-N/descripcion-corta`, creada desde `main`
+    actualizado y solo tras el OK de la fase (por ejemplo,
+    `fase-1/modelos-ingesta`).
+  - Al cerrar la fase, Claude Code abre la PR contra `main` con `gh`.
+  - La fusión la hace solo una persona, con los tests en verde. Claude Code
+    nunca fusiona.
+  - Excepción: los cambios que solo tocan documentación van directos a
+    `main`.
+  - No hay protección de rama en GitHub por ahora: la regla se sostiene por
+    convención, así que no se empuja código a `main` sin PR.
+- CHANGELOG (convención propia): `CHANGELOG.md` sigue Keep a Changelog. Toda
+  PR añade su entrada en `## [Unreleased]` antes de fusionarse.
