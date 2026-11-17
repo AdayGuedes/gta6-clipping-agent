@@ -36,7 +36,9 @@ def test_env_esta_en_gitignore():
 
 def test_env_example_no_tiene_valores():
     lineas = (RAIZ / ".env.example").read_text(encoding="utf-8").splitlines()
-    variables = [linea for linea in lineas if linea.strip() and not linea.startswith("#")]
+    variables = [
+        linea for linea in lineas if linea.strip() and not linea.startswith("#")
+    ]
     assert variables, ".env.example debe declarar al menos una variable"
     for linea in variables:
         clave, separador, valor = linea.partition("=")

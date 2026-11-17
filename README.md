@@ -13,9 +13,9 @@ El estado de cada fase está en [PROGRESS.md](PROGRESS.md).
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install pytest          # el resto de dependencias llega en la fase 1
+pip install -r requirements.txt
 cp .env.example .env        # y rellena ANTHROPIC_API_KEY
-python -m pytest
+ruff check . && black --check . && python -m pytest   # lo mismo que ejecuta el CI
 ```
 
 ## Uso (fase 4, todavía no disponible)
