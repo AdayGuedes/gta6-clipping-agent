@@ -17,7 +17,7 @@ revisa un humano. El sistema no edita vídeo ni publica nada.
 ```
 ficheros locales (transcripción, chat)
   → cargadores                           (fase 1)  → segments, chat_events
-  → generador de candidatos, sin IA      (fase 2)  → 15-20 candidatos con reaccion_chat
+  → generador de candidatos, sin IA      (fase 2)  → hasta 20 candidatos con reaccion_chat
   → juez con la API de Claude            (fase 3)  → momentos puntuados y validados
   → orden por puntuación, top 5          (fase 3)
   → CLI → resultados.json                (fase 4)
@@ -152,8 +152,8 @@ pico mayor. La fusión tiene un tope de 300 s por ventana (D11): si la unión lo
 supera, el candidato actual se cierra y la ventana siguiente abre uno nuevo,
 con su propio pico mayor. Como una ventana sola mide 135 s, en la práctica solo
 se fusionan picos a 2 minutos o menos, y un grupo largo de picos seguidos puede
-partirse en candidatos solapados. Después se quedan los 15-20 mejores, cada uno
-con sus puntos de `reaccion_chat` ya calculados.
+partirse en candidatos solapados. Después se quedan como máximo los 20 mejores,
+cada uno con sus puntos de `reaccion_chat` ya calculados.
 
 ### 7.2 Criterios que juzga Claude
 
