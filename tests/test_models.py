@@ -1,9 +1,9 @@
 import pytest
 from pydantic import ValidationError
 
-from src.models import Chat, ChatEvent, Desglose, Momento, Segment
+from src.models import Breakdown, Chat, ChatEvent, Moment, Segment
 
-CATEGORIAS = [
+CATEGORIES = [
     "reaccion",
     "bug gracioso",
     "secreto",
@@ -14,33 +14,35 @@ CATEGORIAS = [
 ]
 
 
-def momento_valido(**cambios):
-    datos = {
+def valid_moment(**changes):
+    data = {
         "inicio": "01:23:45",
         "fin": "01:24:30",
         "puntuacion": 87,
         "desglose": {"reaccion_chat": 28, "contexto": 22, "novedad": 20, "gancho": 17},
         "categoria": "bug gracioso",
-        "gancho": "Texto propuesto para el gancho del clip",
+        "gancho": "Proposed hook text for the clip",
         "chat": {"msg_min": 142.0, "multiplicador": 4.7},
     }
-    datos.update(cambios)
-    return datos
+    data.update(changes)
+    return data
 
 
-def test_segment_valido():
-    segmento = Segment(start_s=1.5, end_s=4, text="hola")
-    assert (segmento.start_s, segmento.end_s, segmento.text) == (1.5, 4.0, "hola")
+def test_segment_valid():
+    segment = Segment(start_s=1.5, end_s=4, text="hello")
+    assert (segment.start_s, segment.end_s, segment.text) == (1.5, 4.0, "hello")
 
 
-def test_segment_permite_inicio_igual_a_fin():
-    assert Segment(start_s=3, end_s=3, text="").end_s == 3
+def test_segment_rejects_end_equal_to_start():
+    with pytest.raises(ValidationError, match="end_s must be greater than start_s"):
+        Segment(start_s=3, end_s=3, text="x")
 
 
 @pytest.mark.parametrize(
-    "datos",
+    "data",
     [
         {"start_s": 5, "end_s": 4, "text": "x"},
+        {"start_s": 3, "end_s": 3, "text": "x"},
         {"start_s": -1, "end_s": 4, "text": "x"},
         {"start_s": 0, "end_s": -1, "text": "x"},
         {"start_s": float("nan"), "end_s": 4, "text": "x"},
@@ -49,18 +51,18 @@ def test_segment_permite_inicio_igual_a_fin():
         {"start_s": 0, "end_s": 4, "text": "x", "extra": 1},
     ],
 )
-def test_segment_invalido(datos):
+def test_segment_invalid(data):
     with pytest.raises(ValidationError):
-        Segment(**datos)
+        Segment(**data)
 
 
-def test_chat_event_valido():
-    evento = ChatEvent(t_s=3725, message="jajaja")
-    assert (evento.t_s, evento.message) == (3725.0, "jajaja")
+def test_chat_event_valid():
+    event = ChatEvent(t_s=3725, message="lol")
+    assert (event.t_s, event.message) == (3725.0, "lol")
 
 
 @pytest.mark.parametrize(
-    "datos",
+    "data",
     [
         {"t_s": -1, "message": "x"},
         {"t_s": float("nan"), "message": "x"},
@@ -68,105 +70,105 @@ def test_chat_event_valido():
         {"t_s": 1, "message": "x", "extra": 1},
     ],
 )
-def test_chat_event_invalido(datos):
+def test_chat_event_invalid(data):
     with pytest.raises(ValidationError):
-        ChatEvent(**datos)
+        ChatEvent(**data)
 
 
 @pytest.mark.parametrize(
-    ("campo", "maximo"),
+    ("field", "maximum"),
     [("reaccion_chat", 30), ("contexto", 25), ("novedad", 25), ("gancho", 20)],
 )
-def test_desglose_respeta_rango_de_cada_campo(campo, maximo):
+def test_breakdown_enforces_each_field_range(field, maximum):
     base = {"reaccion_chat": 0, "contexto": 0, "novedad": 0, "gancho": 0}
-    assert getattr(Desglose(**{**base, campo: maximo}), campo) == maximo
+    assert getattr(Breakdown(**{**base, field: maximum}), field) == maximum
     with pytest.raises(ValidationError):
-        Desglose(**{**base, campo: maximo + 1})
+        Breakdown(**{**base, field: maximum + 1})
     with pytest.raises(ValidationError):
-        Desglose(**{**base, campo: -1})
+        Breakdown(**{**base, field: -1})
 
 
-def test_desglose_total_suma_los_cuatro_campos():
-    desglose = Desglose(reaccion_chat=28, contexto=22, novedad=20, gancho=17)
-    assert desglose.total == 87
+def test_breakdown_total_sums_the_four_fields():
+    breakdown = Breakdown(reaccion_chat=28, contexto=22, novedad=20, gancho=17)
+    assert breakdown.total == 87
 
 
-def test_desglose_maximo_suma_cien():
-    assert Desglose(reaccion_chat=30, contexto=25, novedad=25, gancho=20).total == 100
+def test_breakdown_maximum_totals_one_hundred():
+    assert Breakdown(reaccion_chat=30, contexto=25, novedad=25, gancho=20).total == 100
 
 
 @pytest.mark.parametrize(
-    "datos",
+    "data",
     [{"msg_min": -1, "multiplicador": 1}, {"msg_min": 1, "multiplicador": -0.1}],
 )
-def test_chat_rechaza_negativos(datos):
+def test_chat_rejects_negatives(data):
     with pytest.raises(ValidationError):
-        Chat(**datos)
+        Chat(**data)
 
 
-def test_chat_acepta_cero():
+def test_chat_accepts_zero():
     assert Chat(msg_min=0, multiplicador=0).multiplicador == 0
 
 
-def test_momento_valido():
-    momento = Momento(**momento_valido())
-    assert momento.puntuacion == 87
-    assert momento.desglose.total == 87
-    assert momento.chat.multiplicador == 4.7
+def test_moment_valid():
+    moment = Moment(**valid_moment())
+    assert moment.puntuacion == 87
+    assert moment.desglose.total == 87
+    assert moment.chat.multiplicador == 4.7
 
 
-@pytest.mark.parametrize("categoria", CATEGORIAS)
-def test_momento_acepta_cada_categoria_cerrada(categoria):
-    assert Momento(**momento_valido(categoria=categoria)).categoria == categoria
+@pytest.mark.parametrize("category", CATEGORIES)
+def test_moment_accepts_each_closed_category(category):
+    assert Moment(**valid_moment(categoria=category)).categoria == category
 
 
-@pytest.mark.parametrize("categoria", ["Reaccion", "gracioso", "", "otro "])
-def test_momento_rechaza_categoria_fuera_de_la_lista(categoria):
+@pytest.mark.parametrize("category", ["Reaccion", "gracioso", "", "otro "])
+def test_moment_rejects_category_outside_the_list(category):
     with pytest.raises(ValidationError):
-        Momento(**momento_valido(categoria=categoria))
+        Moment(**valid_moment(categoria=category))
 
 
 @pytest.mark.parametrize(
-    "hora", ["1:23:45", "01:23", "01:60:00", "01:23:45\n", "abc", ""]
+    "time", ["1:23:45", "01:23", "01:60:00", "01:23:45\n", "abc", ""]
 )
-def test_momento_rechaza_horas_mal_formadas(hora):
+def test_moment_rejects_malformed_times(time):
     with pytest.raises(ValidationError):
-        Momento(**momento_valido(inicio=hora))
+        Moment(**valid_moment(inicio=time))
 
 
 @pytest.mark.parametrize(
     ("inicio", "fin"),
     [("01:24:30", "01:24:30"), ("01:25:00", "01:24:30")],
 )
-def test_momento_exige_inicio_anterior_a_fin(inicio, fin):
-    with pytest.raises(ValidationError, match="inicio debe ser anterior a fin"):
-        Momento(**momento_valido(inicio=inicio, fin=fin))
+def test_moment_requires_inicio_before_fin(inicio, fin):
+    with pytest.raises(ValidationError, match="inicio must be earlier than fin"):
+        Moment(**valid_moment(inicio=inicio, fin=fin))
 
 
-def test_momento_exige_puntuacion_igual_a_la_suma_del_desglose():
-    with pytest.raises(ValidationError, match="no coincide con la suma"):
-        Momento(**momento_valido(puntuacion=88))
+def test_moment_requires_puntuacion_to_equal_the_breakdown_sum():
+    with pytest.raises(ValidationError, match="does not match the sum"):
+        Moment(**valid_moment(puntuacion=88))
 
 
-@pytest.mark.parametrize("puntuacion", [-1, 101])
-def test_momento_rechaza_puntuacion_fuera_de_rango(puntuacion):
+@pytest.mark.parametrize("score", [-1, 101])
+def test_moment_rejects_score_out_of_range(score):
     with pytest.raises(ValidationError):
-        Momento(**momento_valido(puntuacion=puntuacion))
+        Moment(**valid_moment(puntuacion=score))
 
 
-def test_momento_rechaza_gancho_vacio():
+def test_moment_rejects_empty_hook():
     with pytest.raises(ValidationError):
-        Momento(**momento_valido(gancho="   "))
+        Moment(**valid_moment(gancho="   "))
 
 
-def test_momento_rechaza_campos_desconocidos():
+def test_moment_rejects_unknown_fields():
     with pytest.raises(ValidationError):
-        Momento(**momento_valido(extra="x"))
+        Moment(**valid_moment(extra="x"))
 
 
-def test_momento_serializa_con_la_forma_de_la_spec():
-    salida = Momento(**momento_valido()).model_dump()
-    assert set(salida) == {
+def test_moment_serializes_with_the_spec_shape():
+    output = Moment(**valid_moment()).model_dump()
+    assert set(output) == {
         "inicio",
         "fin",
         "puntuacion",
@@ -175,5 +177,5 @@ def test_momento_serializa_con_la_forma_de_la_spec():
         "gancho",
         "chat",
     }
-    assert set(salida["desglose"]) == {"reaccion_chat", "contexto", "novedad", "gancho"}
-    assert set(salida["chat"]) == {"msg_min", "multiplicador"}
+    assert set(output["desglose"]) == {"reaccion_chat", "contexto", "novedad", "gancho"}
+    assert set(output["chat"]) == {"msg_min", "multiplicador"}

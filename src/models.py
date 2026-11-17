@@ -2,9 +2,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from src.tiempo import hhmmss_a_segundos
+from src.timeparse import hhmmss_to_seconds
 
-Categoria = Literal[
+Category = Literal[
     "reaccion",
     "bug gracioso",
     "secreto",
@@ -14,36 +14,36 @@ Categoria = Literal[
     "otro",
 ]
 
-Segundos = Annotated[float, Field(ge=0, allow_inf_nan=False)]
-NoNegativo = Annotated[float, Field(ge=0, allow_inf_nan=False)]
-HoraHHMMSS = Annotated[
+Seconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+NonNegative = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+ClockTime = Annotated[
     str, StringConstraints(pattern=r"^[0-9]{2,}:[0-5][0-9]:[0-5][0-9]$")
 ]
-TextoNoVacio = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class _Modelo(BaseModel):
+class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Segment(_Modelo):
-    start_s: Segundos
-    end_s: Segundos
+class Segment(_Model):
+    start_s: Seconds
+    end_s: Seconds
     text: str
 
     @model_validator(mode="after")
-    def _fin_no_antes_del_inicio(self) -> "Segment":
-        if self.end_s < self.start_s:
-            raise ValueError("end_s no puede ser menor que start_s")
+    def _end_after_start(self) -> "Segment":
+        if self.end_s <= self.start_s:
+            raise ValueError("end_s must be greater than start_s")
         return self
 
 
-class ChatEvent(_Modelo):
-    t_s: Segundos
+class ChatEvent(_Model):
+    t_s: Seconds
     message: str
 
 
-class Desglose(_Modelo):
+class Breakdown(_Model):
     reaccion_chat: int = Field(ge=0, le=30)
     contexto: int = Field(ge=0, le=25)
     novedad: int = Field(ge=0, le=25)
@@ -54,27 +54,27 @@ class Desglose(_Modelo):
         return self.reaccion_chat + self.contexto + self.novedad + self.gancho
 
 
-class Chat(_Modelo):
-    msg_min: NoNegativo
-    multiplicador: NoNegativo
+class Chat(_Model):
+    msg_min: NonNegative
+    multiplicador: NonNegative
 
 
-class Momento(_Modelo):
-    inicio: HoraHHMMSS
-    fin: HoraHHMMSS
+class Moment(_Model):
+    inicio: ClockTime
+    fin: ClockTime
     puntuacion: int = Field(ge=0, le=100)
-    desglose: Desglose
-    categoria: Categoria
-    gancho: TextoNoVacio
+    desglose: Breakdown
+    categoria: Category
+    gancho: NonEmptyText
     chat: Chat
 
     @model_validator(mode="after")
-    def _coherencia(self) -> "Momento":
-        if hhmmss_a_segundos(self.inicio) >= hhmmss_a_segundos(self.fin):
-            raise ValueError("inicio debe ser anterior a fin")
+    def _consistent(self) -> "Moment":
+        if hhmmss_to_seconds(self.inicio) >= hhmmss_to_seconds(self.fin):
+            raise ValueError("inicio must be earlier than fin")
         if self.puntuacion != self.desglose.total:
             raise ValueError(
-                f"puntuacion ({self.puntuacion}) no coincide con la suma del "
+                f"puntuacion ({self.puntuacion}) does not match the sum of "
                 f"desglose ({self.desglose.total})"
             )
         return self

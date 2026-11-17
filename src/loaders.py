@@ -7,115 +7,113 @@ from typing import TypeVar
 from pydantic import ValidationError
 
 from src.models import ChatEvent, Segment
-from src.tiempo import parsear_tiempo
+from src.timeparse import parse_time
 
 T = TypeVar("T", ChatEvent, Segment)
 
-CLAVES_TRANSCRIPCION = ("start_s", "end_s", "text")
-CLAVES_CHAT = ("t_s", "message")
+TRANSCRIPT_KEYS = ("start_s", "end_s", "text")
+CHAT_KEYS = ("t_s", "message")
 
 
-class ErrorDeCarga(ValueError):
+class LoadError(ValueError):
     pass
 
 
-def cargar_transcripcion(ruta: str | Path) -> list[Segment]:
-    return _cargar(ruta, CLAVES_TRANSCRIPCION, ("start_s", "end_s"), Segment)
+def load_transcript(path: str | Path) -> list[Segment]:
+    return _load(path, TRANSCRIPT_KEYS, ("start_s", "end_s"), Segment)
 
 
-def cargar_chat(ruta: str | Path) -> list[ChatEvent]:
-    return _cargar(ruta, CLAVES_CHAT, ("t_s",), ChatEvent)
+def load_chat(path: str | Path) -> list[ChatEvent]:
+    return _load(path, CHAT_KEYS, ("t_s",), ChatEvent)
 
 
-def _cargar(
-    ruta: str | Path,
-    claves: tuple[str, ...],
-    claves_de_tiempo: tuple[str, ...],
-    modelo: Callable[..., T],
+def _load(
+    path: str | Path,
+    keys: tuple[str, ...],
+    time_keys: tuple[str, ...],
+    model: Callable[..., T],
 ) -> list[T]:
-    ruta = Path(ruta)
-    registros = _leer_registros(ruta)
+    path = Path(path)
+    records = _read_records(path)
     return [
-        _construir(ruta, numero, registro, claves, claves_de_tiempo, modelo)
-        for numero, registro in enumerate(registros, start=1)
+        _build(path, number, record, keys, time_keys, model)
+        for number, record in enumerate(records, start=1)
     ]
 
 
-def _leer_registros(ruta: Path) -> list[dict]:
-    if not ruta.is_file():
-        raise ErrorDeCarga(f"{ruta}: el fichero no existe")
+def _read_records(path: Path) -> list[dict]:
+    if not path.is_file():
+        raise LoadError(f"{path}: file does not exist")
 
-    extension = ruta.suffix.lower()
+    extension = path.suffix.lower()
     if extension == ".json":
-        return _leer_json(ruta)
+        return _read_json(path)
     if extension == ".csv":
-        return _leer_csv(ruta)
-    raise ErrorDeCarga(
-        f"{ruta.name}: formato no soportado ({ruta.suffix!r}); usa .json o .csv"
+        return _read_csv(path)
+    raise LoadError(
+        f"{path.name}: unsupported format ({path.suffix!r}); use .json or .csv"
     )
 
 
-def _leer_json(ruta: Path) -> list[dict]:
+def _read_json(path: Path) -> list[dict]:
     try:
-        contenido = json.loads(ruta.read_text(encoding="utf-8-sig"))
+        content = json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as error:
-        raise ErrorDeCarga(f"{ruta.name}: JSON no válido ({error})") from error
+        raise LoadError(f"{path.name}: invalid JSON ({error})") from error
 
-    if not isinstance(contenido, list):
-        raise ErrorDeCarga(
-            f"{ruta.name}: se esperaba una lista de objetos en la raíz del JSON"
-        )
-    for numero, registro in enumerate(contenido, start=1):
-        if not isinstance(registro, dict):
-            raise ErrorDeCarga(f"{ruta.name}, registro {numero}: se esperaba un objeto")
-    return contenido
+    if not isinstance(content, list):
+        raise LoadError(f"{path.name}: expected a list of objects at the JSON root")
+    for number, record in enumerate(content, start=1):
+        if not isinstance(record, dict):
+            raise LoadError(f"{path.name}, record {number}: expected an object")
+    return content
 
 
-def _leer_csv(ruta: Path) -> list[dict]:
-    with ruta.open(encoding="utf-8-sig", newline="") as fichero:
-        lector = csv.DictReader(fichero)
-        if lector.fieldnames is None:
-            raise ErrorDeCarga(
-                f"{ruta.name}: el CSV está vacío; falta la fila de cabecera"
-            )
-        registros = []
-        for numero, fila in enumerate(lector, start=1):
-            if None in fila:
-                raise ErrorDeCarga(
-                    f"{ruta.name}, registro {numero}: más columnas que la cabecera"
+def _read_csv(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        if reader.fieldnames is None:
+            raise LoadError(f"{path.name}: the CSV is empty; the header row is missing")
+        records = []
+        for number, row in enumerate(reader, start=1):
+            if None in row:
+                raise LoadError(
+                    f"{path.name}, record {number}: more columns than the header"
                 )
-            registros.append(fila)
-    return registros
+            records.append(row)
+    return records
 
 
-def _construir(
-    ruta: Path,
-    numero: int,
-    registro: dict,
-    claves: tuple[str, ...],
-    claves_de_tiempo: tuple[str, ...],
-    modelo: Callable[..., T],
+def _build(
+    path: Path,
+    number: int,
+    record: dict,
+    keys: tuple[str, ...],
+    time_keys: tuple[str, ...],
+    model: Callable[..., T],
 ) -> T:
-    donde = f"{ruta.name}, registro {numero}"
+    where = f"{path.name}, record {number}"
 
-    faltan = [clave for clave in claves if clave not in registro]
-    if faltan:
-        raise ErrorDeCarga(
-            f"{donde}: faltan las claves {', '.join(faltan)}; se esperaba "
-            f"{', '.join(claves)} y llegó {', '.join(str(clave) for clave in registro) or 'nada'}"
+    missing = [key for key in keys if key not in record]
+    if missing:
+        found = ", ".join(str(key) for key in record) or "nothing"
+        raise LoadError(
+            f"{where}: missing keys {', '.join(missing)}; "
+            f"expected {', '.join(keys)} but got {found}"
         )
 
-    datos = {clave: registro[clave] for clave in claves}
-    for clave in claves_de_tiempo:
+    data = {key: record[key] for key in keys}
+    for key in time_keys:
         try:
-            datos[clave] = parsear_tiempo(datos[clave])
+            data[key] = parse_time(data[key])
         except ValueError as error:
-            raise ErrorDeCarga(f"{donde}, clave {clave}: {error}") from error
+            raise LoadError(f"{where}, key {key}: {error}") from error
 
     try:
-        return modelo(**datos)
+        return model(**data)
     except ValidationError as error:
-        detalle = "; ".join(
-            f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors()
+        details = "; ".join(
+            f"{'.'.join(map(str, e['loc']))}: {e['msg']}" if e["loc"] else e["msg"]
+            for e in error.errors()
         )
-        raise ErrorDeCarga(f"{donde}: {detalle}") from error
+        raise LoadError(f"{where}: {details}") from error

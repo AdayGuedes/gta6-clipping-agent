@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- [NO-REF] Add GitHub Actions CI with ruff, black and pytest
-- [NO-REF] Add pydantic models and JSON/CSV loaders for transcript and chat
+- Add GitHub Actions CI with ruff, black and pytest
+- Add pydantic models and JSON/CSV loaders for transcript and chat
 
 ### Changed
 
-- [NO-REF] Resolve SPEC open questions and record decision D5
+- Resolve SPEC open questions and record decision D5
