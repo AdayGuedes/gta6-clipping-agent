@@ -142,6 +142,33 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   candidatos, o ninguno si el chat es uniforme; no se rellenan con minutos por
   debajo del umbral.
 
+## D11 · 2026-11-17 · Dictámenes sobre la auto-revisión de la fase 2
+
+- **Decisión:** el arquitecto resuelve los cinco puntos que dejó abiertos la
+  auto-revisión de la PR de la fase 2:
+  1. **Tope de 300 s por ventana candidata.** En la fusión, la ventana
+     siguiente solo se une si la unión no supera 300 s. Si los supera, el
+     candidato actual se cierra y esa ventana abre uno nuevo. Cada candidato
+     conserva `msg_min`, multiplicador y puntos de su propio pico mayor.
+  2. **Redondeo half-up de `reaction_points`** al construir el `Moment` en la
+     fase 3 (15,5 → 16), porque `reaccion_chat` es entero.
+  3. **Limitación aceptada:** el detector no conoce la duración del VOD. La
+     línea base cuenta minutos hasta el último mensaje y el fin de una ventana
+     no se recorta al final del VOD.
+  4. **Pico mayor por `msg_min`;** a igualdad gana el primero.
+  5. **Sin relleno** por debajo del umbral x1,5: un VOD con pocos picos da
+     menos de 15 candidatos.
+- **Por qué:** la fusión por distancia aplicada en cadena no acotaba la
+  longitud de la ventana (diez picos a 4 minutos daban una de 38 minutos), y
+  el juez de la fase 3 debe recibir trozos manejables. Los otros cuatro puntos
+  fijan por escrito lo que el código ya hacía o lo que la fase 3 necesita.
+- **Implica:** `src/peaks.py` fija `MAX_WINDOW_S = 300`. Una ventana sola mide
+  135 s, así que bajo el tope solo se fusionan picos a 2 minutos o menos; la
+  regla de los 120 s solo cambia el resultado cerca del inicio del VOD, donde
+  la ventana se recorta a 0. Un grupo largo de picos seguidos se parte en
+  varios candidatos que pueden solaparse en el tiempo. La fase 3 aplica el
+  redondeo half-up al pasar de `Candidate` a `Moment`.
+
 ## Propuestas
 
 Ninguna por ahora.

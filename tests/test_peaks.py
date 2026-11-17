@@ -2,6 +2,7 @@ import pytest
 
 from src.models import ChatEvent
 from src.peaks import (
+    MAX_WINDOW_S,
     InsufficientChatError,
     compute_baseline,
     count_messages_per_minute,
@@ -120,26 +121,53 @@ def test_unsorted_events_give_the_same_candidates():
     assert generate_candidates(list(reversed(events))) == generate_candidates(events)
 
 
-def test_close_peaks_merge_keeping_the_larger_peak():
-    events = events_from_counts(with_peaks(20, {5: 30, 8: 50}))
+def test_close_peaks_merge_under_the_cap_keeping_the_larger_peak():
+    events = events_from_counts(with_peaks(20, {5: 30, 7: 50}))
     [candidate] = generate_candidates(events)
-    assert (candidate.start_s, candidate.end_s) == (240.0, 555.0)
+    assert (candidate.start_s, candidate.end_s) == (240.0, 495.0)
+    assert candidate.end_s - candidate.start_s <= MAX_WINDOW_S
     assert candidate.msg_min == 50
     assert candidate.multiplier == pytest.approx(5.0)
     assert candidate.reaction_points == pytest.approx(29.0)
 
 
 def test_merge_keeps_the_larger_peak_when_it_comes_first():
-    events = events_from_counts(with_peaks(20, {5: 50, 8: 30}))
+    events = events_from_counts(with_peaks(20, {5: 50, 7: 30}))
     [candidate] = generate_candidates(events)
-    assert (candidate.start_s, candidate.end_s, candidate.msg_min) == (240.0, 555.0, 50)
+    assert (candidate.start_s, candidate.end_s, candidate.msg_min) == (240.0, 495.0, 50)
 
 
-def test_windows_105_s_apart_merge_and_165_s_apart_do_not():
-    merged = generate_candidates(events_from_counts(with_peaks(20, {5: 30, 9: 30})))
-    separate = generate_candidates(events_from_counts(with_peaks(20, {5: 30, 10: 30})))
-    assert len(merged) == 1
-    assert len(separate) == 2
+def test_close_windows_do_not_merge_when_the_union_exceeds_the_cap():
+    candidates = generate_candidates(events_from_counts(with_peaks(20, {5: 30, 8: 30})))
+    assert [(c.start_s, c.end_s) for c in candidates] == [
+        (240.0, 375.0),
+        (420.0, 555.0),
+    ]
+
+
+def test_gap_rule_still_merges_separate_windows_under_the_cap():
+    [candidate] = generate_candidates(
+        events_from_counts(with_peaks(20, {0: 40, 3: 40}))
+    )
+    assert (candidate.start_s, candidate.end_s) == (0.0, 255.0)
+
+
+def test_chain_of_ten_peaks_four_minutes_apart_stays_under_the_cap():
+    peaks = {minute: 30 for minute in range(10, 50, 4)}
+    candidates = generate_candidates(events_from_counts(with_peaks(60, peaks)))
+    assert len(candidates) == 10
+    assert all(c.end_s - c.start_s <= MAX_WINDOW_S for c in candidates)
+
+
+def test_capped_cluster_opens_a_new_candidate_with_its_own_peak():
+    peaks = {10: 30, 11: 40, 12: 30, 13: 50}
+    candidates = generate_candidates(events_from_counts(with_peaks(60, peaks)))
+    by_start = sorted(candidates, key=lambda c: c.start_s)
+    assert [(c.start_s, c.end_s, c.msg_min) for c in by_start] == [
+        (540.0, 795.0, 40),
+        (720.0, 855.0, 50),
+    ]
+    assert all(c.end_s - c.start_s <= MAX_WINDOW_S for c in candidates)
 
 
 def test_far_peaks_give_two_candidates_sorted_by_points():

@@ -8,6 +8,7 @@ BUCKET_S = 60
 LEAD_S = 60
 TAIL_S = 15
 MERGE_GAP_S = 120
+MAX_WINDOW_S = 300
 CANDIDATE_MIN_MULTIPLIER = 1.5
 MAX_CANDIDATES = 20
 
@@ -90,11 +91,19 @@ def _candidate_for_bucket(bucket: int, count: int, multiplier: float) -> Candida
 def _merge_close_windows(candidates: list[Candidate]) -> list[Candidate]:
     merged: list[Candidate] = []
     for candidate in sorted(candidates, key=lambda c: c.start_s):
-        if merged and candidate.start_s - merged[-1].end_s < MERGE_GAP_S:
+        if merged and _can_merge(merged[-1], candidate):
             merged[-1] = _union(merged[-1], candidate)
         else:
             merged.append(candidate)
     return merged
+
+
+def _can_merge(current: Candidate, following: Candidate) -> bool:
+    close = following.start_s - current.end_s < MERGE_GAP_S
+    union_s = max(current.end_s, following.end_s) - min(
+        current.start_s, following.start_s
+    )
+    return close and union_s <= MAX_WINDOW_S
 
 
 def _union(first: Candidate, second: Candidate) -> Candidate:
