@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from src.models import Breakdown, Chat, ChatEvent, Moment, Segment
+from src.models import Breakdown, Candidate, Chat, ChatEvent, Moment, Segment
 
 CATEGORIES = [
     "reaccion",
@@ -179,3 +179,47 @@ def test_moment_serializes_with_the_spec_shape():
     }
     assert set(output["desglose"]) == {"reaccion_chat", "contexto", "novedad", "gancho"}
     assert set(output["chat"]) == {"msg_min", "multiplicador"}
+
+
+def valid_candidate(**changes):
+    data = {
+        "start_s": 240,
+        "end_s": 375,
+        "msg_min": 40,
+        "multiplier": 4.0,
+        "reaction_points": 28.0,
+    }
+    data.update(changes)
+    return data
+
+
+def test_candidate_valid():
+    candidate = Candidate(**valid_candidate())
+    assert (candidate.start_s, candidate.end_s, candidate.msg_min) == (240.0, 375.0, 40)
+
+
+@pytest.mark.parametrize("points", [0, 15.5, 30])
+def test_candidate_accepts_points_within_range(points):
+    assert (
+        Candidate(**valid_candidate(reaction_points=points)).reaction_points == points
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"end_s": 240},
+        {"end_s": 100},
+        {"start_s": -1},
+        {"msg_min": -1},
+        {"msg_min": 1.5},
+        {"multiplier": -0.1},
+        {"reaction_points": -0.1},
+        {"reaction_points": 30.1},
+        {"reaction_points": float("nan")},
+        {"extra": 1},
+    ],
+)
+def test_candidate_invalid(changes):
+    with pytest.raises(ValidationError):
+        Candidate(**valid_candidate(**changes))
