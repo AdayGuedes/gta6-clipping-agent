@@ -110,6 +110,21 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   estructura descrita en `CLAUDE.md` incorpora `requirements.txt`, que llega en
   la fase 1 con `pydantic` y `pytest` solamente.
 
+## D8 · 2026-11-17 · CI desde la fase 1; CD fuera hasta v2
+
+- **Decisión:**
+  - Hay CI en GitHub Actions desde la fase 1. En pull requests y en pushes a
+    `main` ejecuta, sobre Python 3.11: `pip install -r requirements.txt`,
+    `ruff check .`, `black --check .` y `python -m pytest`.
+  - No hay CD hasta v2, donde irán Docker y GHCR.
+  - El CI no usa ningún secreto: los tests no llaman a la API real.
+- **Por qué:** D6 pide fusionar solo con tests en verde, y el CI hace esa
+  condición comprobable por quien revisa la PR sin depender de que se hayan
+  pasado en local. No hay nada que desplegar hasta v2.
+- **Implica:** `ruff` y `black` entran en `requirements.txt` junto a
+  `pydantic` y `pytest`, con su configuración por defecto. El workflow vive en
+  `.github/workflows/ci.yml`.
+
 ## Propuestas
 
 Ninguna por ahora.
