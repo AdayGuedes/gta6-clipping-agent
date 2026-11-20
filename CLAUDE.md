@@ -6,9 +6,9 @@ sobre cualquier idea de mejora que surja por el camino.
 ## Qué es
 
 Detector agéntico de momentos clipeables de GTA 6 en VODs de streamers en
-español. Es un proyecto de aprendizaje de AI Engineering aplicado: cada pieza
-tiene que poder entenderse, por eso el orquestador es nuestro, simple y
-explícito. La spec completa está en [SPEC.md](SPEC.md).
+español o en inglés. Es un proyecto de aprendizaje de AI Engineering aplicado:
+cada pieza tiene que poder entenderse, por eso el orquestador es nuestro,
+simple y explícito. La spec completa está en [SPEC.md](SPEC.md).
 
 ## Restricciones duras
 

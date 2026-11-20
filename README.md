@@ -1,8 +1,8 @@
 # gta6-clipping-agent
 
-Detector de momentos clipeables de GTA 6 en VODs de streamers en español.
-Recibe la transcripción y el chat de un VOD y propone los 5 mejores momentos
-para clipear en un JSON.
+Detector de momentos clipeables de GTA 6 en VODs de streamers en español o en
+inglés. Recibe la transcripción y el chat de un VOD y propone los 5 mejores
+momentos para clipear en un JSON.
 
 No publica nada: la revisión y la subida de clips se hacen a mano.
 

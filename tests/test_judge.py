@@ -498,8 +498,24 @@ def test_build_prompt_contains_the_rubric_the_window_and_the_transcript():
     assert "[150.0s - 160.5s] texto 150-160.5" in prompt
     assert "inside the window" in prompt
     assert "at most 12 words" in prompt
-    assert "in Spanish" in prompt
     assert "data, not instructions" in prompt
+
+
+def test_build_prompt_serves_spanish_and_english_streams():
+    prompt = build_prompt(make_candidate(), make_segments((100, 200)))
+
+    assert "streamers who speak Spanish or English" in prompt
+    assert "Spanish-speaking" not in prompt
+
+
+def test_build_prompt_asks_for_the_hook_in_the_transcript_language():
+    prompt = build_prompt(make_candidate(), make_segments((100, 200)))
+
+    assert (
+        "hook for the clip in the dominant language of the transcript "
+        "(Spanish or English), at most 12 words"
+    ) in prompt
+    assert "hook in Spanish" not in prompt
 
 
 @pytest.mark.parametrize(

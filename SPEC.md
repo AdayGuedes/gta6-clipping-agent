@@ -4,8 +4,8 @@ Versión: v0 · Fecha: 2026-11-17 · Revisada con D5 y D12 (ver docs/DECISIONS.m
 
 ## 1. Contexto
 
-Clips de GTA 6 de streamers en español, sacados de VODs. Un VOD es la
-grabación de un directo ya terminado.
+Clips de GTA 6 de streamers en español o en inglés, sacados de VODs. Un VOD es
+la grabación de un directo ya terminado.
 
 ## 2. Objetivo
 
@@ -86,7 +86,7 @@ momentos como máximo.
 | `desglose.novedad`        | 0-25, lo juzga el LLM juez                                          |
 | `desglose.gancho`         | 0-20, lo juzga el LLM juez                                          |
 | `categoria`               | una de la lista cerrada (sección 6)                                 |
-| `gancho`                  | texto propuesto para el gancho del clip                             |
+| `gancho`                  | gancho propuesto, en el idioma dominante de la transcripción        |
 | `chat.msg_min`            | mensajes por minuto en la ventana del pico                          |
 | `chat.multiplicador`      | `msg_min` / línea base del VOD                                      |
 
@@ -173,7 +173,8 @@ cada uno con sus puntos de `reaccion_chat` ya calculados.
 - Ajusta `inicio`/`fin` fino dentro de la ventana candidata. No puede
   devolver timestamps fuera de ella.
 - Puntúa contexto, novedad y gancho según la rúbrica, asigna una categoría de
-  la lista cerrada y escribe el gancho.
+  la lista cerrada y escribe el gancho en el idioma dominante de la
+  transcripción (español o inglés).
 - Su salida es estructurada y se valida con pydantic contra el esquema de la
   sección 5.
 - Si la salida no valida (o trae tiempos fuera de la ventana, o falla la
