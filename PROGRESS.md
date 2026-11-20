@@ -1,10 +1,11 @@
 # PROGRESS
 
-**Fase actual:** v0 cerrado. La prueba con un VOD real de 8:34:30 está
-registrada en la [nota de la fase 4](docs/sessions/2026-11-19-fase-4.md): 0
-candidatos y 0/10 clips de referencia, porque el chat de ese directo es demasiado
-plano para el umbral ×1,5 (máximo ×1,31). Decisión sobre el detector pendiente
-del arquitecto.
+**Fase actual:** v1 abierta. El v0 está cerrado: la prueba con un VOD real de
+8:34:30 ([nota de la fase 4](docs/sessions/2026-11-19-fase-4.md)) dio 0
+candidatos y 0/10 clips de referencia, porque el chat de ese directo es
+demasiado plano para el umbral ×1,5 (máximo ×1,31). El detector queda decidido
+en [D15](docs/DECISIONS.md). Siguiente paso: la fase 5 (ventana deslizante y
+top-K, con arnés de evaluación y primera corrida del juez sobre el fixture).
 
 ## Fases v0
 
@@ -22,3 +23,9 @@ del arquitecto.
       - [x] Prueba con un VOD real (aceptación de SPEC §10), registrada en la
         nota de sesión (2026-11-20): 0 candidatos, 0/10 clips, 0 llamadas al
         juez.
+
+## Fases v1
+
+- [ ] Fase 5 detector revisado (D15): ventana deslizante de 60 s, selección
+      top-K con supresión de no-máximos, `DetectorConfig`, arnés de evaluación
+      sin juez y primera corrida del juez sobre el fixture de Rubius
