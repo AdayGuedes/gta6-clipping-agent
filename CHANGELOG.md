@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add chat-peak candidate generator with reaction points (D10)
 - Add LLM judge behind a Judge interface, with Gemini free tier as first provider (D12)
 - Add end-to-end CLI and evaluation against hand-provided Twitch clips
+- Record the real-VOD acceptance run in the phase 4 session note (0 candidates, 0/10)
 
 ### Changed
 
