@@ -53,6 +53,7 @@ requirements.txt   dependencias de Python
 docs/DECISIONS.md  decisiones fechadas y propuestas fuera de alcance
 docs/sessions/     una nota por fase cerrada
 src/               código
+examples/          datos sintéticos de demostración (examples/demo/)
 tests/             tests (pytest)
 ```
 

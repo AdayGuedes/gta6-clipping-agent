@@ -224,6 +224,39 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
     la lista cerrada (SPEC §5 y §6) siguen en español también para directos en
     inglés.
 
+## D14 · 2026-11-19 · CLI, evaluación y datos de demostración (fase 4)
+
+- **Decisión:**
+  - `--reference` es un argumento opcional del CLI.
+  - El fichero de referencia es una lista de clips con `start_s` y `end_s`
+    (números o `HH:MM:SS`; las claves extra se ignoran; la maquinaria común de
+    los cargadores acepta también CSV). Lo carga `load_reference` en
+    `src/loaders.py` y se modela como `ReferenceClip`, de modo que
+    `evaluate()` nunca recibe una ruta.
+  - Un clip de referencia está detectado si algún `Moment` solapa
+    `[start_s-60, end_s+60]`, extremos incluidos. Es deliberadamente distinto
+    del solape estricto de la deduplicación del juez.
+  - Códigos de salida: 0 correcto, 1 error fatal, 2 argumentos incorrectos
+    (`argparse`), 130 interrumpido.
+  - Un candidato que falla no es fatal.
+  - La ruta de salida se valida antes de cualquier llamada al juez.
+  - Los datos sintéticos viven en `examples/demo/`: 90 minutos, línea base de
+    12 mensajes por minuto, picos en los minutos 10, 33, 34 y 70, y una
+    referencia con resultado conocido de 2/3.
+  - Sin ritmo de llamadas en esta fase.
+- **Por qué:** la evaluación de la SPEC §10 necesita una entrada de referencia
+  sin atar el núcleo a ficheros (CLAUDE.md, restricción 2). Validar la salida
+  antes de juzgar evita gastar cuota para luego no poder escribir. Los datos
+  sintéticos permiten probar el flujo completo sin red y con un resultado
+  conocido.
+- **Implica:**
+  - La SPEC §9 y §10 reflejan `--reference` y el formato JSON o CSV.
+  - Un fallo en todos los candidatos (clave inválida, cuota agotada) sigue
+    saliendo con 0 y escribiendo `[]`: queda a la espera de una decisión del
+    arquitecto.
+  - Sin espera entre llamadas: la ejecución real dirá cuántos 429 aparecen en
+    el tier gratuito y entonces se toma una decisión nueva.
+
 ## Propuestas
 
 Ninguna por ahora.

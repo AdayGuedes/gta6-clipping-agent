@@ -1,7 +1,15 @@
 import pytest
 from pydantic import ValidationError
 
-from src.models import Breakdown, Candidate, Chat, ChatEvent, Moment, Segment
+from src.models import (
+    Breakdown,
+    Candidate,
+    Chat,
+    ChatEvent,
+    Moment,
+    ReferenceClip,
+    Segment,
+)
 
 CATEGORIES = [
     "reaccion",
@@ -223,3 +231,31 @@ def test_candidate_accepts_points_within_range(points):
 def test_candidate_invalid(changes):
     with pytest.raises(ValidationError):
         Candidate(**valid_candidate(**changes))
+
+
+def test_reference_clip_valid():
+    clip = ReferenceClip(start_s=610, end_s=640.5)
+    assert (clip.start_s, clip.end_s) == (610.0, 640.5)
+
+
+def test_reference_clip_rejects_end_equal_to_start():
+    with pytest.raises(ValidationError, match="end_s must be greater than start_s"):
+        ReferenceClip(start_s=3, end_s=3)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"start_s": 5, "end_s": 4},
+        {"start_s": -1, "end_s": 4},
+        {"start_s": 0, "end_s": -1},
+        {"start_s": float("nan"), "end_s": 4},
+        {"start_s": 0, "end_s": float("inf")},
+        {"start_s": 0},
+        {"end_s": 4},
+        {"start_s": 0, "end_s": 4, "title": "x"},
+    ],
+)
+def test_reference_clip_invalid(data):
+    with pytest.raises(ValidationError):
+        ReferenceClip(**data)
