@@ -272,4 +272,35 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
 
 ## Propuestas
 
-Ninguna por ahora.
+Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
+arquitecto las resuelva y se registren como D-n.
+
+### Revisión del detector de picos tras la corrida real (2026-11-20)
+
+- **Estado:** abierta, sin decidir.
+- **Datos de la corrida real** (VOD de Rubius, 8:34:30, nota de sesión de la
+  fase 4):
+  - Mediana de 544 mensajes por minuto y máximo de ×1,31.
+  - 39 minutos por encima de ×1,2, solo 1 por encima de ×1,3 y ninguno por
+    encima del umbral ×1,5 (D10).
+  - Los 10 clips de referencia caen en minutos de ×0,58 a ×1,30.
+  - Resultado: 0 candidatos, 0 llamadas al juez, 0/10 clips.
+- **Dos lecturas, ambas abiertas:**
+  - a) Calibración. El umbral y la mediana global se fijaron con datos
+    sintéticos. Bajar solo el umbral no basta: a ×1,25 apenas saldría un puñado
+    de minutos.
+  - b) Señal. En un mega-directo, los clips más vistos no son picos de chat a
+    resolución de 60 s (un clip cae en un minuto por debajo de la mediana). La
+    reacción a un momento de 8-30 s se diluye en el cubo de un minuto.
+- **Ejes candidatos para v1, sin decidir:**
+  - Resolución sub-minuto o ventana deslizante para medir la reacción.
+  - Línea base local o rodante en lugar de una mediana global para 8,5 h con
+    fases distintas.
+  - Señales complementarias al volumen: usuarios únicos por minuto y densidad
+    de emotes.
+- **Deuda asociada:** el juez sigue sin validar con datos reales (0 candidatos
+  son 0 llamadas): contrato con Gemini, comportamiento ante 429 y acierto.
+- **Fixture:** el dataset de Rubius (`chat.json`, `transcript.json` y
+  `reference.json` en `~/rubius-run`, fuera del repo) queda como fixture. La
+  primera corrida de v1 con el detector revisado se hace sobre estos mismos
+  datos, sin descargar nada, y ahí se cierra también la validación del juez.
