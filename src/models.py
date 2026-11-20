@@ -38,6 +38,17 @@ class Segment(_Model):
         return self
 
 
+class ReferenceClip(_Model):
+    start_s: Seconds
+    end_s: Seconds
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> "ReferenceClip":
+        if self.end_s <= self.start_s:
+            raise ValueError("end_s must be greater than start_s")
+        return self
+
+
 class ChatEvent(_Model):
     t_s: Seconds
     message: str

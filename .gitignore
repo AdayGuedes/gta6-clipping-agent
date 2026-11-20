@@ -1,6 +1,9 @@
 # Secretos: nunca se commitean
 .env
 
+# Salida local del CLI
+resultados.json
+
 # Python
 .venv/
 __pycache__/

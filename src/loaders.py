@@ -6,13 +6,14 @@ from typing import TypeVar
 
 from pydantic import ValidationError
 
-from src.models import ChatEvent, Segment
+from src.models import ChatEvent, ReferenceClip, Segment
 from src.timeparse import parse_time
 
-T = TypeVar("T", ChatEvent, Segment)
+T = TypeVar("T", ChatEvent, ReferenceClip, Segment)
 
 TRANSCRIPT_KEYS = ("start_s", "end_s", "text")
 CHAT_KEYS = ("t_s", "message")
+REFERENCE_KEYS = ("start_s", "end_s")
 
 
 class LoadError(ValueError):
@@ -25,6 +26,10 @@ def load_transcript(path: str | Path) -> list[Segment]:
 
 def load_chat(path: str | Path) -> list[ChatEvent]:
     return _load(path, CHAT_KEYS, ("t_s",), ChatEvent)
+
+
+def load_reference(path: str | Path) -> list[ReferenceClip]:
+    return _load(path, REFERENCE_KEYS, REFERENCE_KEYS, ReferenceClip)
 
 
 def _load(
@@ -42,23 +47,34 @@ def _load(
 
 
 def _read_records(path: Path) -> list[dict]:
-    if not path.is_file():
+    if not path.exists():
         raise LoadError(f"{path}: file does not exist")
+    if not path.is_file():
+        raise LoadError(f"{path}: not a file")
 
     extension = path.suffix.lower()
     if extension == ".json":
-        return _read_json(path)
-    if extension == ".csv":
-        return _read_csv(path)
-    raise LoadError(
-        f"{path.name}: unsupported format ({path.suffix!r}); use .json or .csv"
-    )
+        reader = _read_json
+    elif extension == ".csv":
+        reader = _read_csv
+    else:
+        raise LoadError(
+            f"{path.name}: unsupported format ({path.suffix!r}); use .json or .csv"
+        )
+
+    try:
+        return reader(path)
+    except UnicodeDecodeError as error:
+        raise LoadError(f"{path.name}: file is not valid UTF-8 ({error})") from error
+    except csv.Error as error:
+        raise LoadError(f"{path.name}: invalid CSV ({error})") from error
 
 
 def _read_json(path: Path) -> list[dict]:
+    text = path.read_text(encoding="utf-8-sig")
     try:
-        content = json.loads(path.read_text(encoding="utf-8-sig"))
-    except json.JSONDecodeError as error:
+        content = json.loads(text)
+    except (ValueError, OverflowError, RecursionError) as error:
         raise LoadError(f"{path.name}: invalid JSON ({error})") from error
 
     if not isinstance(content, list):
@@ -106,7 +122,7 @@ def _build(
     for key in time_keys:
         try:
             data[key] = parse_time(data[key])
-        except ValueError as error:
+        except (ValueError, OverflowError, RecursionError) as error:
             raise LoadError(f"{where}, key {key}: {error}") from error
 
     try:

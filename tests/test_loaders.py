@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from src.loaders import LoadError, load_chat, load_transcript
-from src.models import ChatEvent, Segment
+from src.loaders import LoadError, load_chat, load_reference, load_transcript
+from src.models import ChatEvent, ReferenceClip, Segment
 
 
 def write(tmp_path, name, content):
@@ -206,3 +206,119 @@ def test_missing_file(tmp_path):
 
 def test_load_error_is_a_value_error():
     assert issubclass(LoadError, ValueError)
+
+
+def test_reference_json_with_seconds(tmp_path):
+    path = write(tmp_path, "r.json", [{"start_s": 610, "end_s": 640.5}])
+    assert load_reference(path) == [ReferenceClip(start_s=610, end_s=640.5)]
+
+
+def test_reference_json_with_hhmmss_times(tmp_path):
+    path = write(tmp_path, "r.json", [{"start_s": "00:33:30", "end_s": "00:34:10"}])
+    assert load_reference(path) == [ReferenceClip(start_s=2010, end_s=2050)]
+
+
+def test_reference_mixes_both_time_formats(tmp_path):
+    path = write(
+        tmp_path,
+        "r.json",
+        [
+            {"start_s": 610, "end_s": "00:10:40"},
+            {"start_s": "00:50:00", "end_s": 3030},
+        ],
+    )
+    assert load_reference(path) == [
+        ReferenceClip(start_s=610, end_s=640),
+        ReferenceClip(start_s=3000, end_s=3030),
+    ]
+
+
+def test_reference_csv(tmp_path):
+    path = write(tmp_path, "r.csv", "start_s,end_s\n610,640\n00:33:30,00:34:10\n")
+    assert load_reference(path) == [
+        ReferenceClip(start_s=610, end_s=640),
+        ReferenceClip(start_s=2010, end_s=2050),
+    ]
+
+
+def test_reference_extra_keys_are_ignored(tmp_path):
+    path = write(
+        tmp_path,
+        "r.json",
+        [{"title": "Coche volando", "start_s": 610, "end_s": 640, "views": 1234}],
+    )
+    assert load_reference(path) == [ReferenceClip(start_s=610, end_s=640)]
+
+
+def test_reference_empty_list_returns_empty_list(tmp_path):
+    assert load_reference(write(tmp_path, "r.json", [])) == []
+
+
+def test_reference_missing_key_says_what_was_expected(tmp_path):
+    path = write(tmp_path, "r.json", [{"start_s": 610, "title": "x"}])
+    with pytest.raises(LoadError) as error:
+        load_reference(path)
+    message = str(error.value)
+    assert "r.json" in message
+    assert "record 1" in message
+    assert "missing keys end_s" in message
+    assert "expected start_s, end_s" in message
+    assert "title" in message
+
+
+def test_reference_wrong_keys_report_both_missing(tmp_path):
+    path = write(tmp_path, "r.json", [{"inicio": 1, "fin": 2}])
+    with pytest.raises(LoadError, match="missing keys start_s, end_s"):
+        load_reference(path)
+
+
+@pytest.mark.parametrize("end", [640, 600])
+def test_reference_end_not_after_start_is_rejected(tmp_path, end):
+    path = write(tmp_path, "r.json", [{"start_s": 640, "end_s": end}])
+    with pytest.raises(LoadError, match="end_s must be greater than start_s"):
+        load_reference(path)
+
+
+def test_reference_invalid_time_names_file_record_and_key(tmp_path):
+    path = write(tmp_path, "r.json", [{"start_s": 1, "end_s": "99:99:99"}])
+    with pytest.raises(LoadError, match=r"r\.json, record 1, key end_s"):
+        load_reference(path)
+
+
+def test_reference_missing_file(tmp_path):
+    with pytest.raises(LoadError, match="file does not exist"):
+        load_reference(tmp_path / "nope.json")
+
+
+def test_a_directory_as_input_is_a_load_error(tmp_path):
+    directory = tmp_path / "data.json"
+    directory.mkdir()
+
+    with pytest.raises(LoadError, match="not a file"):
+        load_chat(directory)
+
+
+@pytest.mark.parametrize("name", ["bad.json", "bad.csv"])
+def test_invalid_utf8_bytes_are_a_load_error_naming_the_file(tmp_path, name):
+    path = tmp_path / name
+    path.write_bytes(b"t_s,message\n1,\xff\xfe not utf-8\n")
+
+    with pytest.raises(LoadError, match=rf"{name}: file is not valid UTF-8"):
+        load_chat(path)
+
+
+def test_a_csv_with_an_unclosed_quote_is_a_load_error(tmp_path):
+    path = write(tmp_path, "c.csv", 't_s,message\n1,"' + "a" * 140_000 + "\n")
+
+    with pytest.raises(LoadError, match=r"c\.csv: invalid CSV"):
+        load_chat(path)
+
+
+def test_a_huge_integer_time_in_json_is_a_load_error_naming_the_file(tmp_path):
+    path = tmp_path / "t.json"
+    path.write_text(
+        '[{"start_s": 1' + "0" * 399 + ', "end_s": 5, "text": "x"}]', encoding="utf-8"
+    )
+
+    with pytest.raises(LoadError, match=r"t\.json"):
+        load_transcript(path)

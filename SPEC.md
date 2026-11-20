@@ -189,15 +189,18 @@ cada uno con sus puntos de `reaccion_chat` ya calculados.
 ## 9. CLI (fase 4)
 
 ```bash
-python -m src.main --transcript <fichero> --chat <fichero> --out resultados.json
+python -m src.main --transcript <fichero> --chat <fichero> --out resultados.json [--reference <fichero>]
 ```
+
+`--reference` es opcional: si se pasa, el CLI evalúa los momentos propuestos
+contra los clips de referencia de la sección 10.
 
 ## 10. Criterios de aceptación del v0
 
 - Procesa un VOD real de 2-3 h sin romperse por longitud.
 - Evaluación (fase 4): los 5 momentos se comparan contra los 10 clips más
   vistos de Twitch de ese mismo VOD. Esa referencia se aporta a mano en un
-  JSON con los tiempos de cada clip. Acierto = solape de ±60 s.
+  JSON (o CSV) con los tiempos de cada clip. Acierto = solape de ±60 s.
 
 ## 11. Fuera de alcance en v0
 

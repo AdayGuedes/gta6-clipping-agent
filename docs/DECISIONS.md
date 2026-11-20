@@ -224,6 +224,52 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
     la lista cerrada (SPEC §5 y §6) siguen en español también para directos en
     inglés.
 
+## D14 · 2026-11-19 · CLI, evaluación y datos de demostración (fase 4)
+
+- **Decisión:**
+  - `--reference` es un argumento opcional del CLI.
+  - El fichero de referencia es una lista de clips con `start_s` y `end_s`
+    (números o `HH:MM:SS`; las claves extra se ignoran; la maquinaria común de
+    los cargadores acepta también CSV). Lo carga `load_reference` en
+    `src/loaders.py` y se modela como `ReferenceClip`, de modo que
+    `evaluate()` nunca recibe una ruta.
+  - Un clip de referencia está detectado si algún `Moment` solapa
+    `[start_s-60, end_s+60]`, extremos incluidos. Es deliberadamente distinto
+    del solape estricto de la deduplicación del juez.
+  - Códigos de salida: 0 correcto, 1 error fatal, 2 argumentos incorrectos
+    (`argparse`), 130 interrumpido.
+  - Regla del arquitecto sobre fallos de candidatos:
+    - Si había candidatos y ninguno produce un momento (todos fallan en el
+      juez o no tienen transcripción en su ventana), el CLI sale con 1 y no
+      escribe ni sobrescribe el fichero de salida. Imprime los errores y el
+      uso del juez, pero ni `Moments:`, ni la evaluación, ni la línea de
+      revisión pendiente, y `main()` muestra
+      `error: all N candidates failed; output not written` en stderr.
+    - Cero candidatos del generador no es un error: sale con 0 y escribe `[]`.
+    - Fallos parciales: sale con 0, escribe los momentos y lista los errores.
+  - Un `Judge` que lanza algo distinto de `JudgeError` o `ValueError` no se
+    traga: el CLI falla con traza. En v0 es lo honesto, porque indica un fallo
+    del propio juez y no del candidato.
+  - La ruta de salida se valida antes de cualquier llamada al juez.
+  - Los datos sintéticos viven en `examples/demo/`: 90 minutos, línea base de
+    12 mensajes por minuto, picos en los minutos 10, 33, 34 y 70, y una
+    referencia con resultado conocido de 2/3.
+  - Sin ritmo de llamadas en esta fase.
+- **Por qué:** la evaluación de la SPEC §10 necesita una entrada de referencia
+  sin atar el núcleo a ficheros (CLAUDE.md, restricción 2). Validar la salida
+  antes de juzgar evita gastar cuota para luego no poder escribir. Los datos
+  sintéticos permiten probar el flujo completo sin red y con un resultado
+  conocido.
+- **Implica:**
+  - La SPEC §9 y §10 reflejan `--reference` y el formato JSON o CSV.
+  - Un fallo en todos los candidatos (clave inválida, cuota agotada) ya no
+    se confunde con "no hay momentos": sale con 1 sin tocar la salida, así una
+    corrida anterior no se pierde por un fallo del proveedor.
+  - La fase 4 no cierra el v0 por sí sola: el v0 se cierra cuando la corrida
+    con un VOD real (SPEC §10) esté registrada en la nota de sesión.
+  - Sin espera entre llamadas: la ejecución real dirá cuántos 429 aparecen en
+    el tier gratuito y entonces se toma una decisión nueva.
+
 ## Propuestas
 
 Ninguna por ahora.

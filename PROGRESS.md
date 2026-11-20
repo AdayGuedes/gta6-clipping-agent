@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Fase actual:** Fase 3 hecha, PR pendiente de fusión. Fase 4 pendiente de OK.
+**Fase actual:** Fase 4 en curso: CLI y evaluación hechos en la PR 6; prueba con un VOD real pendiente.
 
 ## Fases v0
 
@@ -13,3 +13,7 @@
 - [x] Fase 3 juez LLM tras una interfaz (Gemini, tier gratuito) y salida JSON
       validada (2026-11-19, [nota](docs/sessions/2026-11-19-fase-3.md))
 - [ ] Fase 4 CLI de punta a punta y prueba con datos reales
+      - [x] CLI y evaluación contra clips de referencia (2026-11-19,
+        [nota](docs/sessions/2026-11-19-fase-4.md))
+      - [ ] Prueba con un VOD real (aceptación de SPEC §10); el v0 se cierra
+        cuando esa corrida esté registrada en la nota de sesión.
