@@ -1,0 +1,650 @@
+import io
+import json
+import random
+import re
+
+import pytest
+
+import src.evaluate as evaluate_module
+import src.harness as harness_module
+import src.judge as judge_module
+from src.harness import (
+    EXIT_FATAL,
+    EXIT_INTERRUPTED,
+    EXIT_OK,
+    KResult,
+    count_hits,
+    evaluate_k,
+    main,
+    passes,
+    random_hits,
+    run,
+)
+from src.models import ChatEvent, ReferenceClip
+from src.peaks import DetectorConfig
+
+POSITIONS = 5937
+PEAK_CONFIG = DetectorConfig(top_k=3)
+TRIALS = 200
+SEED = 1
+
+NEAR_PEAKS = [(1000, 1030), (3000, 3030), (5000, 5030)]
+FAR_FROM_PEAKS = [(2000, 2030), (3900, 3930), (5700, 5730)]
+CONFIG_LINE = (
+    "Config: window 60 s, baseline global, min separation 120 s, lead 60 s, tail 15 s"
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_environment(monkeypatch):
+    def forbidden_client(*args, **kwargs):
+        raise AssertionError("tests must never build the real Gemini client")
+
+    monkeypatch.setattr(judge_module, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(judge_module.genai, "Client", forbidden_client)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+
+
+def clip(start_s, end_s):
+    return ReferenceClip(start_s=start_s, end_s=end_s)
+
+
+def clips(pairs):
+    return [clip(start_s, end_s) for start_s, end_s in pairs]
+
+
+def planted_chat_events():
+    events = [ChatEvent(t_s=float(t), message="x") for t in range(0, 6000, 5)]
+    for second, count in ((1000, 48), (3000, 36), (5000, 24)):
+        events += [ChatEvent(t_s=float(second), message="x")] * count
+    return events
+
+
+def write_chat(tmp_path, name="chat.json"):
+    path = tmp_path / name
+    content = [
+        {"t_s": event.t_s, "message": event.message} for event in planted_chat_events()
+    ]
+    path.write_text(json.dumps(content), encoding="utf-8")
+    return path
+
+
+def write_reference(tmp_path, pairs, name="reference.json"):
+    path = tmp_path / name
+    content = [{"start_s": start_s, "end_s": end_s} for start_s, end_s in pairs]
+    path.write_text(json.dumps(content), encoding="utf-8")
+    return path
+
+
+def cli_args(tmp_path, pairs=NEAR_PEAKS, **overrides):
+    values = {
+        "--chat": write_chat(tmp_path),
+        "--reference": write_reference(tmp_path, pairs),
+        "--k": 3,
+        "--trials": TRIALS,
+        "--seed": SEED,
+    }
+    values.update(overrides)
+    return [
+        part
+        for key, value in values.items()
+        if value is not None
+        for part in (key, str(value))
+    ]
+
+
+def table_rows(lines):
+    pattern = re.compile(
+        r"^\s+(\d+)\s+(\d+)\s+(\d+)/(\d+)\s+(\d+\.\d\d)\s+(\d\.\d{4})$"
+    )
+    return [match.groups() for line in lines if (match := pattern.match(line))]
+
+
+# count_hits
+
+
+def test_count_hits_counts_each_clip_once():
+    windows = [(0, 100), (50, 150)]
+
+    assert count_hits(windows, clips([(100, 120), (400, 420), (700, 720)])) == 1
+
+
+def test_count_hits_does_not_double_count_a_clip_matched_by_several_windows():
+    windows = [(0, 100), (10, 110), (20, 120)]
+
+    assert count_hits(windows, clips([(100, 120)])) == 1
+
+
+def test_count_hits_counts_every_clip_a_single_window_reaches():
+    assert count_hits([(0, 200)], clips([(10, 20), (150, 160), (900, 910)])) == 2
+
+
+def test_count_hits_uses_the_sixty_second_tolerance_with_inclusive_edges():
+    reference = clips([(160, 200)])
+
+    assert count_hits([(0, 100)], reference) == 1
+    assert count_hits([(0, 99)], reference) == 0
+    assert count_hits([(260, 300)], reference) == 1
+    assert count_hits([(261, 300)], reference) == 0
+
+
+def test_count_hits_without_windows_or_reference_is_zero():
+    assert count_hits([], clips([(10, 20)])) == 0
+    assert count_hits([(0, 100)], []) == 0
+
+
+# random_hits
+
+
+def test_random_hits_is_deterministic_for_a_seed():
+    reference = clips(NEAR_PEAKS)
+
+    first = [
+        random_hits(5, POSITIONS, DetectorConfig(), reference, random.Random(7))
+        for _ in range(3)
+    ]
+
+    assert first[0] == first[1] == first[2]
+
+
+def test_random_hits_advances_the_generator_between_trials():
+    reference = clips([(60, 3000)])
+    config = DetectorConfig()
+    rng = random.Random(3)
+
+    draws = [random_hits(1, 6000, config, reference, rng) for _ in range(40)]
+
+    assert set(draws) == {0, 1}
+
+
+def test_random_hits_with_the_same_seed_repeats_the_whole_sequence():
+    reference = clips([(60, 3000)])
+    config = DetectorConfig()
+
+    def sequence(seed):
+        rng = random.Random(seed)
+        return [random_hits(2, 6000, config, reference, rng) for _ in range(30)]
+
+    assert sequence(11) == sequence(11)
+    assert sequence(11) != sequence(12)
+
+
+def test_random_hits_draws_starts_without_replacement(monkeypatch):
+    config = DetectorConfig(window_s=1, lead_s=0, tail_s=0)
+    reference = clips([(0, 1), (1, 2), (2, 3)])
+    monkeypatch.setattr(
+        harness_module,
+        "window_matches",
+        lambda start_s, end_s, clip_: start_s == clip_.start_s,
+    )
+
+    for seed in range(25):
+        hits = random_hits(3, 3, config, reference, random.Random(seed))
+        assert hits == 3
+
+
+def test_random_hits_with_more_windows_than_positions_uses_every_position(
+    monkeypatch,
+):
+    config = DetectorConfig(window_s=1, lead_s=0, tail_s=0)
+    reference = clips([(0, 1), (1, 2), (2, 3)])
+    monkeypatch.setattr(
+        harness_module,
+        "window_matches",
+        lambda start_s, end_s, clip_: start_s == clip_.start_s,
+    )
+
+    assert random_hits(10, 3, config, reference, random.Random(0)) == 3
+
+
+def test_random_hits_builds_windows_with_the_candidate_geometry():
+    reference = clips([(200, 220)])
+
+    short_tail = random_hits(10, 10, DetectorConfig(), reference, random.Random(0))
+    long_tail = random_hits(
+        10, 10, DetectorConfig(tail_s=100), reference, random.Random(0)
+    )
+
+    assert short_tail == 0
+    assert long_tail == 1
+
+
+def test_random_hits_far_from_the_clip_is_zero():
+    config = DetectorConfig()
+    reference = clips([(5000, 5030)])
+
+    assert random_hits(10, 10, config, reference, random.Random(0)) == 0
+
+
+# KResult / passes
+
+
+def make_result(**overrides):
+    values = {
+        "k": 20,
+        "candidates": 20,
+        "hits": 5,
+        "random_mean": 1.7,
+        "p_value": 0.049,
+    }
+    values.update(overrides)
+    return KResult(**values)
+
+
+def test_passes_requires_a_p_value_below_five_percent():
+    assert passes(make_result(p_value=0.049)) is True
+    assert passes(make_result(p_value=0.05)) is False
+    assert passes(make_result(p_value=0.4)) is False
+
+
+def test_passes_requires_at_least_one_candidate():
+    assert passes(make_result(candidates=0, p_value=0.001)) is False
+    assert passes(make_result(candidates=1, p_value=0.001)) is True
+
+
+def test_k_result_is_immutable():
+    result = make_result()
+
+    with pytest.raises(AttributeError):
+        result.hits = 9
+
+
+# evaluate_k
+
+
+def evaluate_planted(pairs):
+    return evaluate_k(
+        planted_chat_events(), clips(pairs), PEAK_CONFIG, POSITIONS, TRIALS, SEED
+    )
+
+
+def test_evaluate_k_passes_when_the_reference_sits_on_the_peaks():
+    result = evaluate_planted(NEAR_PEAKS)
+
+    assert result.k == 3
+    assert result.candidates == 3
+    assert result.hits == 3
+    assert 0 <= result.random_mean < 1
+    assert 1 / (TRIALS + 1) <= result.p_value < 0.05
+    assert passes(result) is True
+
+
+def test_evaluate_k_fails_when_the_reference_is_far_from_the_peaks():
+    result = evaluate_planted(FAR_FROM_PEAKS)
+
+    assert result.k == 3
+    assert result.candidates == 3
+    assert result.hits == 0
+    assert result.p_value == 1.0
+    assert passes(result) is False
+
+
+def test_evaluate_k_is_deterministic_for_a_seed():
+    assert evaluate_planted(NEAR_PEAKS) == evaluate_planted(NEAR_PEAKS)
+
+
+def test_evaluate_k_p_value_never_reaches_zero():
+    result = evaluate_planted(NEAR_PEAKS)
+
+    assert result.p_value >= 1 / (TRIALS + 1)
+
+
+def test_evaluate_k_reports_the_k_of_its_config():
+    result = evaluate_k(
+        planted_chat_events(),
+        clips(NEAR_PEAKS),
+        DetectorConfig(top_k=5),
+        POSITIONS,
+        TRIALS,
+        SEED,
+    )
+
+    assert result.k == 5
+    assert result.candidates == 5
+    assert result.hits == 3
+
+
+def test_evaluate_k_uses_window_matches_from_the_evaluation_module():
+    assert harness_module.window_matches is evaluate_module.window_matches
+
+
+def test_evaluate_k_follows_a_changed_matching_criterion(monkeypatch):
+    baseline = evaluate_planted(NEAR_PEAKS)
+    monkeypatch.setattr(harness_module, "window_matches", lambda *args: False)
+
+    changed = evaluate_planted(NEAR_PEAKS)
+
+    assert baseline.hits == 3
+    assert changed.hits == 0
+    assert changed.random_mean == 0.0
+    assert changed.p_value == 1.0
+
+
+def test_count_hits_follows_a_changed_matching_criterion(monkeypatch):
+    reference = clips([(100, 120), (900, 920)])
+    monkeypatch.setattr(harness_module, "window_matches", lambda *args: True)
+
+    assert count_hits([(5000, 5100)], reference) == 2
+
+
+# run
+
+
+def run_to_lines(tmp_path, pairs, config=PEAK_CONFIG, trials=TRIALS, seed=SEED):
+    stream = io.StringIO()
+    ok = run(
+        write_chat(tmp_path),
+        write_reference(tmp_path, pairs),
+        config,
+        trials,
+        seed,
+        stream,
+    )
+    return ok, stream.getvalue().splitlines()
+
+
+def test_run_prints_the_header_lines(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    assert lines[:5] == [
+        "Chat: 1308 messages, 5937 window positions",
+        "Reference clips: 3 (tolerance +/-60 s)",
+        CONFIG_LINE,
+        "Random baseline: 200 trials, seed 1",
+        "    K  candidates  hits  random mean  p-value",
+    ]
+
+
+def test_run_prints_one_row_per_reported_k_plus_the_configured_k(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    rows = table_rows(lines)
+
+    assert [row[0] for row in rows] == ["3", "5", "10", "20", "40"]
+    assert [row[1] for row in rows] == ["3", "5", "10", "20", "40"]
+    assert rows[0][2:4] == ("3", "3")
+
+
+def test_run_does_not_repeat_the_configured_k_when_it_is_already_reported(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS, config=DetectorConfig(top_k=10))
+
+    assert [row[0] for row in table_rows(lines)] == ["5", "10", "20", "40"]
+
+
+def test_run_row_for_the_configured_k_matches_evaluate_k(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    result = evaluate_planted(NEAR_PEAKS)
+
+    assert table_rows(lines)[0] == (
+        "3",
+        str(result.candidates),
+        str(result.hits),
+        "3",
+        f"{result.random_mean:.2f}",
+        f"{result.p_value:.4f}",
+    )
+
+
+def test_run_returns_true_and_prints_a_pass_verdict_for_a_reference_on_the_peaks(
+    tmp_path,
+):
+    ok, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    result = evaluate_planted(NEAR_PEAKS)
+    assert ok is True
+    assert lines[-1] == (
+        "Verdict (hits@3 above random with p<0.05, never silent): PASS - "
+        f"hits 3/3, random mean {result.random_mean:.2f}, "
+        f"p={result.p_value:.4f}, candidates 3"
+    )
+
+
+def test_run_returns_false_and_prints_a_fail_verdict_far_from_the_peaks(tmp_path):
+    ok, lines = run_to_lines(tmp_path, FAR_FROM_PEAKS)
+
+    result = evaluate_planted(FAR_FROM_PEAKS)
+    assert ok is False
+    assert lines[-1] == (
+        "Verdict (hits@3 above random with p<0.05, never silent): FAIL - "
+        f"hits 0/3, random mean {result.random_mean:.2f}, "
+        f"p=1.0000, candidates 3"
+    )
+
+
+def test_run_verdict_is_the_last_line_and_names_the_configured_k(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS, config=DetectorConfig(top_k=20))
+
+    assert lines[-1].startswith("Verdict (hits@20 above random with p<0.05")
+    assert sum(line.startswith("Verdict") for line in lines) == 1
+
+
+def test_run_writes_only_to_the_given_stream(tmp_path, capsys):
+    run_to_lines(tmp_path, NEAR_PEAKS)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_run_prints_to_stdout_by_default(tmp_path, capsys):
+    run(
+        write_chat(tmp_path),
+        write_reference(tmp_path, NEAR_PEAKS),
+        PEAK_CONFIG,
+        TRIALS,
+        SEED,
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out.splitlines()[0].startswith("Chat: 1308 messages")
+    assert captured.err == ""
+
+
+def test_run_is_deterministic_for_a_seed(tmp_path):
+    first = run_to_lines(tmp_path, NEAR_PEAKS)
+    second = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    assert first == second
+
+
+def test_run_uses_the_shared_matching_criterion(tmp_path, monkeypatch):
+    monkeypatch.setattr(harness_module, "window_matches", lambda *args: True)
+
+    ok, lines = run_to_lines(tmp_path, FAR_FROM_PEAKS)
+
+    assert ok is False
+    assert "hits 3/3" in lines[-1]
+
+
+def test_run_reports_the_window_size_of_the_config(tmp_path):
+    _, lines = run_to_lines(
+        tmp_path, NEAR_PEAKS, config=DetectorConfig(window_s=30, top_k=3)
+    )
+
+    assert lines[0] == "Chat: 1308 messages, 5967 window positions"
+    assert lines[2].startswith("Config: window 30 s, baseline global")
+
+
+# main
+
+
+def test_main_exits_zero_on_pass(tmp_path, capsys):
+    code = main(cli_args(tmp_path))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_OK == 0
+    assert "PASS" in captured.out.splitlines()[-1]
+    assert captured.err == ""
+
+
+def test_main_exits_zero_on_fail_too(tmp_path, capsys):
+    code = main(cli_args(tmp_path, pairs=FAR_FROM_PEAKS))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_OK == 0
+    assert "FAIL" in captured.out.splitlines()[-1]
+    assert captured.err == ""
+
+
+def test_main_defaults_to_k_twenty_and_window_sixty(tmp_path, capsys):
+    code = main(cli_args(tmp_path, **{"--k": None, "--trials": 20}))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert code == EXIT_OK
+    assert lines[2].startswith("Config: window 60 s")
+    assert lines[3] == "Random baseline: 20 trials, seed 1"
+    assert lines[-1].startswith("Verdict (hits@20 ")
+    assert [row[0] for row in table_rows(lines)] == ["5", "10", "20", "40"]
+
+
+def test_main_passes_the_window_size_to_the_detector(tmp_path, capsys):
+    code = main(cli_args(tmp_path, **{"--window-s": 30}))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert code == EXIT_OK
+    assert lines[0] == "Chat: 1308 messages, 5967 window positions"
+
+
+def test_main_seed_defaults_to_zero(tmp_path, capsys):
+    main(cli_args(tmp_path, **{"--seed": None}))
+
+    assert "seed 0" in capsys.readouterr().out
+
+
+def test_main_missing_chat_file_exits_one_with_an_error(tmp_path, capsys):
+    code = main(cli_args(tmp_path, **{"--chat": tmp_path / "nope.json"}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL == 1
+    assert captured.err.startswith("error: ")
+    assert "nope.json" in captured.err
+    assert "file does not exist" in captured.err
+    assert captured.out == ""
+
+
+def test_main_invalid_reference_exits_one_with_an_error(tmp_path, capsys):
+    reference = tmp_path / "bad.json"
+    reference.write_text(json.dumps([{"start_s": 5, "end_s": 5}]), encoding="utf-8")
+
+    code = main(cli_args(tmp_path, **{"--reference": reference}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err.startswith("error: ")
+    assert "end_s must be greater than start_s" in captured.err
+    assert captured.out == ""
+
+
+def test_main_undecodable_input_exits_one_instead_of_crashing(tmp_path, capsys):
+    chat = tmp_path / "binary.json"
+    chat.write_bytes(b"\xff\xfe\x00 not utf-8 \xff")
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err.startswith("error: ")
+    assert "Traceback" not in captured.err
+
+
+def test_main_chat_without_activity_exits_one(tmp_path, capsys):
+    chat = tmp_path / "empty_chat.json"
+    chat.write_text("[]", encoding="utf-8")
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err == "error: chat sin actividad suficiente\n"
+
+
+@pytest.mark.parametrize("trials", [0, -3])
+def test_main_rejects_non_positive_trials_with_code_two(tmp_path, capsys, trials):
+    with pytest.raises(SystemExit) as exit_info:
+        main(cli_args(tmp_path, **{"--trials": trials}))
+
+    assert exit_info.value.code == 2
+    assert "--trials must be at least 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"--window-s": 0}, {"--window-s": -60}, {"--k": 0}, {"--k": -1}]
+)
+def test_main_rejects_an_invalid_detector_config_with_code_two(
+    tmp_path, capsys, overrides
+):
+    with pytest.raises(SystemExit) as exit_info:
+        main(cli_args(tmp_path, **overrides))
+
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 2
+    assert "must be an integer >= 1" in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("missing", ["--chat", "--reference"])
+def test_main_missing_required_argument_exits_with_code_two(tmp_path, capsys, missing):
+    with pytest.raises(SystemExit) as exit_info:
+        main(cli_args(tmp_path, **{missing: None}))
+
+    assert exit_info.value.code == 2
+    assert missing in capsys.readouterr().err
+
+
+def test_main_non_numeric_option_exits_with_code_two(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(cli_args(tmp_path, **{"--seed": "abc"}))
+
+    assert exit_info.value.code == 2
+
+
+def test_main_keyboard_interrupt_returns_130(tmp_path, capsys, monkeypatch):
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(harness_module, "run", interrupted)
+
+    code = main(cli_args(tmp_path))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_INTERRUPTED == 130
+    assert captured.err == "error: interrupted\n"
+    assert "Traceback" not in captured.err
+
+
+def test_main_os_error_exits_one(tmp_path, capsys, monkeypatch):
+    def failing(*args, **kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(harness_module, "run", failing)
+
+    code = main(cli_args(tmp_path))
+
+    assert code == EXIT_FATAL
+    assert capsys.readouterr().err == "error: disk unavailable\n"
+
+
+def test_main_needs_no_api_key_and_never_builds_the_judge_client(tmp_path, capsys):
+    code = main(cli_args(tmp_path))
+
+    assert code == EXIT_OK
+    assert "GEMINI_API_KEY" not in capsys.readouterr().err
+
+
+def test_the_harness_offers_no_upload_or_judge_option():
+    parser = harness_module._parser()
+
+    options = {option for action in parser._actions for option in action.option_strings}
+
+    assert options == {
+        "-h",
+        "--help",
+        "--chat",
+        "--reference",
+        "--window-s",
+        "--k",
+        "--trials",
+        "--seed",
+    }

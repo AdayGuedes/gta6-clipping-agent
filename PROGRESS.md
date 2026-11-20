@@ -4,8 +4,9 @@
 8:34:30 ([nota de la fase 4](docs/sessions/2026-11-19-fase-4.md)) dio 0
 candidatos y 0/10 clips de referencia, porque el chat de ese directo es
 demasiado plano para el umbral ×1,5 (máximo ×1,31). El detector queda decidido
-en [D15](docs/DECISIONS.md). Siguiente paso: la fase 5 (ventana deslizante y
-top-K, con arnés de evaluación y primera corrida del juez sobre el fixture).
+en [D15](docs/DECISIONS.md). La fase 5 (ventana deslizante y top-K, con arnés
+de evaluación) está implementada y en PR; falta validar el juez real sobre el
+fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
 
 ## Fases v0
 
@@ -26,6 +27,13 @@ top-K, con arnés de evaluación y primera corrida del juez sobre el fixture).
 
 ## Fases v1
 
-- [ ] Fase 5 detector revisado (D15): ventana deslizante de 60 s, selección
-      top-K con supresión de no-máximos, `DetectorConfig`, arnés de evaluación
-      sin juez y primera corrida del juez sobre el fixture de Rubius
+- [ ] Fase 5 detector revisado (D15)
+      - [x] Ventana deslizante de 60 s, selección top-K con supresión de
+        no-máximos, `DetectorConfig`, arnés de evaluación sin juez y tests
+        (554 en verde). El arnés da PASS sobre el fixture de Rubius: 5/10 en
+        K=20 frente a 1,73 del azar, p=0,0245
+        ([nota](docs/sessions/2026-11-20-fase-5.md))
+      - [ ] Primera corrida del juez real sobre el fixture (2026-11-20): 0 de
+        20 candidatos (12 × 429 por el límite de 5 peticiones por minuto del
+        tier gratuito, 7 × 503, 1 sin transcripción). Pendiente decisión del
+        arquitecto sobre ritmo y reintentos del juez
