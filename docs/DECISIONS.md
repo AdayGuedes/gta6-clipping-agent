@@ -205,6 +205,25 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - Las condiciones del tier gratuito pueden permitir a Google usar lo que se
     envía. Hoy solo se envían transcripciones de directos públicos.
 
+## D13 · 2026-11-19 · Directos en español o en inglés
+
+- **Decisión:** el detector sirve VODs de streamers en español o en inglés,
+  no solo en español. El juez escribe el gancho en el idioma dominante de la
+  transcripción (español o inglés), con 12 palabras como máximo.
+- **Por qué:** el arquitecto amplía el alcance a streamers en inglés. Solo el
+  juez depende del idioma: el conteo del chat de la fase 2 y los cargadores de
+  la fase 1 no miran el texto.
+- **Implica:**
+  - El prompt de `build_prompt` habla de streamers en español o en inglés y
+    pide el gancho en el idioma dominante de la transcripción. SPEC §1, §5 y
+    §8, CLAUDE.md ("Qué es") y el README dejan de suponer directos solo en
+    español.
+  - El código no detecta el idioma: lo decide el LLM juez a partir de la
+    transcripción. Otros idiomas no están previstos en v0.
+  - El contrato de salida no cambia: las claves del JSON y las categorías de
+    la lista cerrada (SPEC §5 y §6) siguen en español también para directos en
+    inglés.
+
 ## Propuestas
 
 Ninguna por ahora.
