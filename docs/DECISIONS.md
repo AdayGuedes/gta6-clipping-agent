@@ -141,6 +141,8 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   `MAX_CANDIDATES = 20`. Un VOD con pocos picos puede dar menos de 15
   candidatos, o ninguno si el chat es uniforme; no se rellenan con minutos por
   debajo del umbral.
+- **Estado:** el umbral ×1,5 queda sustituido por D15 (selección top-K); el
+  tope de 20 se mantiene.
 
 ## D11 · 2026-11-17 · Dictámenes sobre la auto-revisión de la fase 2
 
@@ -168,6 +170,7 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   la ventana se recorta a 0. Un grupo largo de picos seguidos se parte en
   varios candidatos que pueden solaparse en el tiempo. La fase 3 aplica el
   redondeo half-up al pasar de `Candidate` a `Moment`.
+- **Estado:** el punto 5 («sin relleno») queda sustituido por D15.
 
 ## D12 · 2026-11-19 · El juez va tras una interfaz; Gemini (tier gratuito) como primer proveedor
 
@@ -270,6 +273,76 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - Sin espera entre llamadas: la ejecución real dirá cuántos 429 aparecen en
     el tier gratuito y entonces se toma una decisión nueva.
 
+## D15 · 2026-11-20 · Revisión del detector de picos para la fase 5
+
+- **Decisión:**
+  1. **Resolución.** El detector cuenta mensajes por segundo en un array y mide
+     la reacción con una ventana deslizante de W=60 s (paso de 1 s), una sola
+     escala: sin multi-escala. `msg_min` sigue siendo mensajes por minuto.
+  2. **Selección.** Top-K con K=20 por puntos de reacción, con supresión de
+     no-máximos (separación mínima de 120 s entre picos, la de `MERGE_GAP_S`).
+     Sustituye al umbral ×1,5 de D10 y al «sin relleno» de D11.5; el tope de
+     20 de D10 se mantiene. El detector nunca calla: con un chat con
+     actividad devuelve siempre candidatos hasta K, aunque la reacción sea
+     débil. El único caso sin candidatos es el error explícito «chat sin
+     actividad suficiente» de la SPEC 7.1.
+  3. **Línea base.** Mediana global por defecto, como en la SPEC 7.1. La línea
+     base local o rodante no se decide con este fixture (F3) y sigue abierta
+     en Propuestas.
+  4. **Configuración.** `DetectorConfig` explícito (dataclass): ventana, línea
+     base, K y separación mínima. Sin frameworks. La firma de
+     `generate_candidates` y `Candidate`, el juez, `Moment` y la salida de la
+     SPEC §5 no cambian.
+  5. **Arnés de evaluación sin juez.** Mide aciertos@K contra el azar, con la
+     tolerancia de D14 y un p-valor por permutación. Comparar configuraciones
+     no gasta cuota del juez.
+  6. **Criterio de aceptación, fijado antes de probar:** aciertos@20 sobre el
+     azar con p<0,05 y nunca silencio (punto 2). Se aplica a la configuración
+     fijada aquí (W=60, línea base global, K=20), no a la mejor de un barrido.
+- **Hallazgos** (medidos sobre el fixture de Rubius, `~/rubius-run`, sin tocar
+  el repo. Son 10 clips de una sola VOD y unas 20 configuraciones probadas sin
+  corregir por comparaciones múltiples: orientativos, no una prueba):
+  - **F1 · Chat capado a 15 msg/s.** En `chat.json` hay 11.223 de 30.874
+    segundos (36,4 %) con exactamente 15 mensajes y ninguno con más. El origen
+    no es atribuible: puede ser un límite de Twitch o de la herramienta de
+    descarga, y el chat crudo se borró en la limpieza del v0. Los picos reales
+    quedan aplastados; un cubo de 1 s no sirve (los timestamps son enteros) y
+    desde 5 s casi no hay ventanas saturadas. Hay que comprobar el histograma
+    de mensajes por segundo en cada VOD nuevo.
+  - **F2 · Causa de los 0 candidatos.** Fue el umbral absoluto. Ordenando sin
+    umbral, la ventana deslizante de 60 s acierta 3/5, 4/10, 5/20 y 7/40
+    clips (azar: 0,4, 0,9, 1,7 y 3,1) y los cubos alineados del v0, 1/5, 2/10,
+    4/20 y 4/40 (p=0,10 en K=20). Con n=10 no se distingue W=30 de W=60.
+  - **F3 · La referencia está contaminada por fase.** 8 de los 10 clips caen en
+    las primeras 3 h (el 35 % del VOD) y 16 de los 20 mejores picos de
+    volumen también. Normalizada por su propia hora, la reacción en los clips
+    vale ×0,91–1,15 frente a un p99 del VOD de ×1,30. Los aciertos de la
+    línea base global miden en parte «el directo está lleno»; la local con
+    suelo da 0-1 aciertos porque quita justo ese efecto. Este fixture no
+    decide entre una y otra.
+  - **F5 · Sin desfase calibrable.** La mejor ventana de volumen cerca de cada
+    clip cae entre −144 s y +119 s de su inicio, sin sesgo. Los clips de
+    referencia marcan la ventana del espectador, no el momento.
+- **Por qué:** el v0 solo falló por la regla de selección, no por la señal en
+  bruto. Un top-K con supresión de no-máximos da candidatos al juez en
+  cualquier chat y deja que la rúbrica (SPEC §7.1) puntúe honestamente una
+  reacción débil. Con 10 clips de una VOD, el criterio se fija antes de
+  probar para no ajustar el detector a la referencia, y el arnés sin juez
+  permite comparar sin gastar cuota.
+- **Implica:**
+  - `LEAD_S` y `TAIL_S` no cambian (F5).
+  - Hasta 20 llamadas al juez por VOD también en chats planos.
+    `chat.multiplicador` sigue mostrando la reacción real al revisor humano.
+  - La fase 5 actualiza SPEC §7.1 y los tests, incluidas las expectativas de
+    `examples/demo` y de `tests/test_main.py`. Si la supresión de no-máximos
+    deja sin efecto la fusión de ventanas (D11.1), la PR lo explica y lo
+    plantea al arquitecto.
+  - La corrida de cierre de la fase 5 sobre el mismo fixture, sin descargar
+    nada, es también la primera con el juez real: contrato con Gemini, 429 y
+    acierto.
+  - Va en su rama `fase-5/...` y su PR (D6), con Opus, cuando D15 esté en
+    `main`.
+
 ## Propuestas
 
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
@@ -277,7 +350,9 @@ arquitecto las resuelva y se registren como D-n.
 
 ### Revisión del detector de picos tras la corrida real (2026-11-20)
 
-- **Estado:** abierta, sin decidir.
+- **Estado:** parcialmente resuelta por D15 (2026-11-20): resolución de la
+  ventana, regla de selección y arnés de evaluación. Queda abierta solo en lo
+  no decidido, abajo.
 - **Datos de la corrida real** (VOD de Rubius, 8:34:30, nota de sesión de la
   fase 4):
   - Mediana de 544 mensajes por minuto y máximo de ×1,31.
@@ -285,22 +360,35 @@ arquitecto las resuelva y se registren como D-n.
     encima del umbral ×1,5 (D10).
   - Los 10 clips de referencia caen en minutos de ×0,58 a ×1,30.
   - Resultado: 0 candidatos, 0 llamadas al juez, 0/10 clips.
-- **Dos lecturas, ambas abiertas:**
-  - a) Calibración. El umbral y la mediana global se fijaron con datos
-    sintéticos. Bajar solo el umbral no basta: a ×1,25 apenas saldría un puñado
-    de minutos.
-  - b) Señal. En un mega-directo, los clips más vistos no son picos de chat a
-    resolución de 60 s (un clip cae en un minuto por debajo de la mediana). La
-    reacción a un momento de 8-30 s se diluye en el cubo de un minuto.
-- **Ejes candidatos para v1, sin decidir:**
-  - Resolución sub-minuto o ventana deslizante para medir la reacción.
-  - Línea base local o rodante en lugar de una mediana global para 8,5 h con
-    fases distintas.
-  - Señales complementarias al volumen: usuarios únicos por minuto y densidad
-    de emotes.
-- **Deuda asociada:** el juez sigue sin validar con datos reales (0 candidatos
-  son 0 llamadas): contrato con Gemini, comportamiento ante 429 y acierto.
+- **Resuelto en D15:** la resolución (ventana deslizante de 60 s sobre un array
+  por segundo), la selección (top-K con supresión de no-máximos en lugar del
+  umbral ×1,5), la línea base por defecto (mediana global) y el arnés de
+  evaluación sin juez con su criterio de aceptación. Las dos lecturas que
+  traía esta propuesta (calibración y señal) quedan respondidas por los
+  hallazgos F2 y F3 de D15.
+- **Sigue abierto, sin decidir:**
+  - **Línea base local o rodante** en lugar de la mediana global, para
+    directos de 8,5 h con fases distintas. No se decide con el fixture de
+    Rubius: su referencia está contaminada por fase (D15, F3). No entra en la
+    fase 5.
+  - **Señales complementarias** al volumen, sin pesos ni léxicos fijados hasta
+    que lo confirme más de una VOD:
+    - Usuarios únicos por minuto. Exige un campo `user` en `ChatEvent`, que
+      hoy solo tiene `t_s` y `message`. Se plantea como requisito de ingesta
+      de la v2: cambiaría la SPEC §4, los cargadores, el CSV y los datos de
+      demostración.
+    - Densidad de emotes. Sin metadatos de emotes solo hay proxies de texto:
+      un léxico a mano (dependiente del idioma y del streamer, fácil de
+      sobreajustar) o la ráfaga por token, sin léxico.
+    - Mensajes distintos por ventana, calculable sin cambiar el contrato.
+    - Densidad de habla de la transcripción, solo como señal de selección y
+      nunca como puntos de `reaccion_chat`; exigiría deduplicar las
+      alucinaciones de Whisper.
+  - **Segunda VOD de validación**, de otro tipo de streamer (chat pequeño, no
+    un mega-directo), para comprobar que el detector generaliza y para decidir
+    la línea base. Hay que descargarla, así que necesita el OK del arquitecto.
 - **Fixture:** el dataset de Rubius (`chat.json`, `transcript.json` y
   `reference.json` en `~/rubius-run`, fuera del repo) queda como fixture. La
-  primera corrida de v1 con el detector revisado se hace sobre estos mismos
-  datos, sin descargar nada, y ahí se cierra también la validación del juez.
+  primera corrida de la fase 5 con el detector revisado se hace sobre estos
+  mismos datos, sin descargar nada, y ahí se cierra también la validación del
+  juez (D15).

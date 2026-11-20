@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add end-to-end CLI and evaluation against hand-provided Twitch clips
 - Record the real-VOD acceptance run in the phase 4 session note (0 candidates, 0/10)
 - Record an open proposal to review the chat-peak detector after the real-VOD run
+- Record decision D15 for the phase 5 detector revision and narrow the open proposal
 
 ### Changed
 
