@@ -43,10 +43,13 @@ sintéticos de 90 minutos para probar el flujo.
 
 Códigos de salida: `0` si todo va bien, `1` en un error fatal (falta la clave,
 un fichero no existe o no es válido, la ruta de `--out` no se puede escribir o
-pisaría un fichero de entrada, el chat no tiene actividad suficiente), `2` si
-los argumentos son incorrectos y `130` si se interrumpe con Ctrl+C. La ruta de
-`--out` se comprueba antes de llamar al juez. Un candidato que falla dos veces en el
-juez no es fatal: se cuenta en `Candidate errors` y el resto sigue adelante.
+pisaría un fichero de entrada, el chat no tiene actividad suficiente, o todos
+los candidatos fallan: en ese caso el fichero de `--out` no se crea ni se
+sobrescribe), `2` si los argumentos son incorrectos y `130` si se interrumpe
+con Ctrl+C. La ruta de `--out` se comprueba antes de llamar al juez. Un
+candidato que falla dos veces en el juez no es fatal mientras algún otro
+produzca un momento: se cuenta en `Candidate errors` y el resto sigue adelante.
+Si el generador no propone ningún candidato, sale con `0` y escribe `[]`.
 
 El sistema no sube ni publica nada: el resultado es un JSON para que lo
 revises y subas a mano.

@@ -39,6 +39,10 @@ class OutputPathError(ValueError):
     pass
 
 
+class AllCandidatesFailedError(RuntimeError):
+    pass
+
+
 def _check_out_path(out_path: Path, input_paths: Sequence[Path]) -> None:
     target = out_path.resolve()
     if target.is_dir():
@@ -85,12 +89,20 @@ def run(
 
     candidates = generate_candidates(events)
     moments, errors = judge_candidates(candidates, segments, judge)
+    diagnostics = [f"Candidate errors: {len(errors)}"]
+    diagnostics.extend(f"  - {error}" for error in errors)
+    diagnostics.append(_usage_line(judge))
+
+    if candidates and not moments:
+        for line in diagnostics:
+            print(line, file=stream)
+        raise AllCandidatesFailedError(
+            f"all {len(candidates)} candidates failed; output not written"
+        )
+
     _write_moments(out_path, moments)
 
-    lines = [f"Moments: {len(moments)} written to {out_path}"]
-    lines.append(f"Candidate errors: {len(errors)}")
-    lines.extend(f"  - {error}" for error in errors)
-    lines.append(_usage_line(judge))
+    lines = [f"Moments: {len(moments)} written to {out_path}", *diagnostics]
     if reference is not None:
         lines.extend(format_report(evaluate(moments, reference)))
     lines.append(PENDING_REVIEW)
@@ -128,6 +140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         judge = GeminiJudge()
         run(args.transcript, args.chat, args.out, judge, args.reference)
     except (
+        AllCandidatesFailedError,
         JudgeConfigError,
         LoadError,
         InsufficientChatError,

@@ -1,12 +1,14 @@
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from google.genai import types
 
 import src.judge as judge_module
 import src.main as main_module
@@ -322,17 +324,98 @@ def test_every_failing_candidate_gets_its_own_error_line(tmp_path):
     ]
 
 
-def test_all_candidates_failing_writes_an_empty_list(tmp_path):
-    outcomes = {
-        key: [JudgeError("down"), JudgeError("down")] for key in demo_outcomes()
-    }
+def failing_outcomes(message="down"):
+    return {key: [JudgeError(message), JudgeError(message)] for key in demo_outcomes()}
 
-    moments, out_path, lines = run_demo(tmp_path, FakeJudge(outcomes))
 
-    assert moments == []
-    assert read_output(out_path) == []
-    assert lines[0] == f"Moments: 0 written to {out_path}"
-    assert lines[1] == "Candidate errors: 3"
+TOTAL_FAILURE_LINES = [
+    "Candidate errors: 3",
+    "  - candidate 00:09:00-00:11:15: down",
+    "  - candidate 00:32:00-00:35:15: down",
+    "  - candidate 01:09:00-01:11:15: down",
+    "Judge usage: not reported by this judge",
+]
+
+TOTAL_FAILURE_MESSAGE = "all 3 candidates failed; output not written"
+
+
+def run_total_failure(tmp_path, judge, reference=None, out_path=None):
+    out_path = tmp_path / "resultados.json" if out_path is None else out_path
+    stream = io.StringIO()
+    with pytest.raises(main_module.AllCandidatesFailedError) as error_info:
+        run(TRANSCRIPT, CHAT, out_path, judge, reference, stream)
+    return error_info.value, stream.getvalue().splitlines()
+
+
+def test_all_candidates_failing_raises_and_does_not_create_the_output(tmp_path):
+    error, _ = run_total_failure(tmp_path, FakeJudge(failing_outcomes()))
+
+    assert str(error) == TOTAL_FAILURE_MESSAGE
+    assert not (tmp_path / "resultados.json").exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_all_candidates_failed_error_is_a_runtime_error():
+    assert issubclass(main_module.AllCandidatesFailedError, RuntimeError)
+
+
+def test_all_candidates_failing_keeps_an_existing_output_byte_for_byte(tmp_path):
+    out_path = tmp_path / "resultados.json"
+    previous = b'[{"previous": "run"}]\n'
+    out_path.write_bytes(previous)
+
+    run_total_failure(tmp_path, FakeJudge(failing_outcomes()), out_path=out_path)
+
+    assert out_path.read_bytes() == previous
+
+
+def test_all_candidates_failing_prints_only_the_errors_and_the_usage(tmp_path):
+    _, lines = run_total_failure(tmp_path, FakeJudge(failing_outcomes()))
+
+    assert lines == TOTAL_FAILURE_LINES
+    assert not any(line.startswith("Moments:") for line in lines)
+    assert PENDING_REVIEW not in lines
+
+
+def test_all_candidates_failing_prints_the_usage_of_a_reporting_judge(tmp_path):
+    _, lines = run_total_failure(tmp_path, UsageJudge(failing_outcomes()))
+
+    assert lines[-1] == "Judge usage: 6 calls, 600 input tokens, 150 output tokens"
+
+
+def test_all_candidates_failing_prints_no_evaluation_with_a_reference(tmp_path):
+    judge = FakeJudge(failing_outcomes())
+
+    error, lines = run_total_failure(tmp_path, judge, reference=REFERENCE)
+
+    assert lines == TOTAL_FAILURE_LINES
+    assert not any(line.startswith("Evaluation") for line in lines)
+    assert "detected" not in " ".join(lines)
+    assert str(error) == TOTAL_FAILURE_MESSAGE
+
+
+def test_candidates_without_transcript_all_fail_like_judge_errors(tmp_path):
+    transcript = write_json(
+        tmp_path,
+        "late_transcript.json",
+        [{"start_s": 9000, "end_s": 9030, "text": "Esto queda lejos de todo"}],
+    )
+    judge = FakeJudge({})
+    out_path = tmp_path / "resultados.json"
+    stream = io.StringIO()
+
+    with pytest.raises(main_module.AllCandidatesFailedError, match="all 3 candidates"):
+        run(transcript, CHAT, out_path, judge, None, stream)
+
+    assert judge.requests == []
+    assert not out_path.exists()
+    assert stream.getvalue().splitlines() == [
+        "Candidate errors: 3",
+        "  - candidate 00:09:00-00:11:15: no transcript in the window",
+        "  - candidate 00:32:00-00:35:15: no transcript in the window",
+        "  - candidate 01:09:00-01:11:15: no transcript in the window",
+        "Judge usage: not reported by this judge",
+    ]
 
 
 # run: evaluation
@@ -541,6 +624,123 @@ def test_main_unwritable_output_exits_one(tmp_path, capsys, fake_judge):
 
     assert code == EXIT_FATAL
     assert capsys.readouterr().err.startswith("error: ")
+
+
+def test_main_all_candidates_failing_exits_one_and_leaves_no_output(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(
+        main_module, "GeminiJudge", lambda: UsageJudge(failing_outcomes())
+    )
+
+    code = main(cli_args(tmp_path))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL == 1
+    assert captured.err == "error: all 3 candidates failed; output not written\n"
+    assert "Moments:" not in captured.out
+    assert PENDING_REVIEW not in captured.out
+    assert "Candidate errors: 3" in captured.out
+    assert not (tmp_path / "resultados.json").exists()
+
+
+def test_main_all_candidates_failing_keeps_an_existing_output(
+    tmp_path, capsys, monkeypatch
+):
+    out_path = tmp_path / "resultados.json"
+    out_path.write_text("previous content\n", encoding="utf-8")
+    monkeypatch.setattr(
+        main_module, "GeminiJudge", lambda: UsageJudge(failing_outcomes())
+    )
+
+    code = main(cli_args(tmp_path))
+
+    assert code == EXIT_FATAL
+    assert out_path.read_text(encoding="utf-8") == "previous content\n"
+
+
+def test_main_all_candidates_failing_with_reference_prints_no_evaluation(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(
+        main_module, "GeminiJudge", lambda: UsageJudge(failing_outcomes())
+    )
+
+    code = main(cli_args(tmp_path, **{"--reference": REFERENCE}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert "Evaluation" not in captured.out
+    assert not (tmp_path / "resultados.json").exists()
+
+
+def test_main_candidates_without_transcript_exit_one(tmp_path, capsys, fake_judge):
+    transcript = write_json(
+        tmp_path,
+        "late_transcript.json",
+        [{"start_s": 9000, "end_s": 9030, "text": "Esto queda lejos de todo"}],
+    )
+
+    code = main(cli_args(tmp_path, **{"--transcript": transcript}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err == "error: all 3 candidates failed; output not written\n"
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
+def test_main_partial_failure_exits_zero_and_writes_the_moments(
+    tmp_path, capsys, monkeypatch
+):
+    outcomes = demo_outcomes()
+    outcomes[540.0] = [JudgeError("rate limited"), JudgeError("rate limited")]
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: UsageJudge(outcomes))
+
+    code = main(cli_args(tmp_path))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert captured.err == ""
+    assert len(read_output(tmp_path / "resultados.json")) == 2
+    assert "Candidate errors: 1" in captured.out
+    assert "  - candidate 00:09:00-00:11:15: rate limited" in captured.out
+    assert captured.out.splitlines()[-1] == PENDING_REVIEW
+
+
+def test_main_zero_candidates_exits_zero_and_writes_an_empty_list(
+    tmp_path, capsys, monkeypatch
+):
+    chat = write_json(
+        tmp_path,
+        "flat_chat.json",
+        [{"t_s": second, "message": "hola"} for second in range(0, 600, 5)],
+    )
+    judge = UsageJudge({})
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: judge)
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert captured.err == ""
+    assert (tmp_path / "resultados.json").read_text(encoding="utf-8") == "[]\n"
+    assert "Moments: 0 written to" in captured.out
+    assert judge.calls == 0
+
+
+def test_main_corrupt_csv_exits_one_naming_the_file(tmp_path, capsys, fake_judge):
+    chat = tmp_path / "broken_chat.csv"
+    chat.write_text('t_s,message\n1,"' + "a" * 140_000 + "\n", encoding="utf-8")
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err.startswith("error: broken_chat.csv: invalid CSV")
+    assert "Traceback" not in captured.err
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
 
 
 # output path preflight
@@ -798,6 +998,46 @@ def test_gemini_judge_satisfies_the_reports_usage_protocol():
     assert judge.calls == 0
     assert judge.input_tokens == 0
     assert judge.output_tokens == 0
+
+
+class ScriptedGenaiClient:
+    def __init__(self, texts, usage):
+        self._texts = list(texts)
+        self._usage = usage
+        self.models = self
+
+    def generate_content(self, *, model, contents, config):
+        return types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(parts=[types.Part(text=self._texts.pop(0))])
+                )
+            ],
+            usage_metadata=self._usage,
+        )
+
+
+def test_gemini_judge_with_a_fake_client_prints_numeric_usage(
+    tmp_path, capsys, monkeypatch
+):
+    texts = [
+        make_judgment(*window, "gancho", 10, 10, 10).model_dump_json()
+        for window in ((600, 650), (2010, 2050), (4200, 4240))
+    ]
+    usage = types.GenerateContentResponseUsageMetadata(
+        prompt_token_count=1000, candidates_token_count=60, thoughts_token_count=40
+    )
+    judge = GeminiJudge(client=ScriptedGenaiClient(texts, usage))
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: judge)
+
+    code = main(cli_args(tmp_path))
+
+    lines = capsys.readouterr().out.splitlines()
+    assert code == EXIT_OK
+    assert isinstance(judge, ReportsUsage)
+    assert "Judge usage: 3 calls, 3000 input tokens, 300 output tokens" in lines
+    usage_line = next(line for line in lines if line.startswith("Judge usage:"))
+    assert [int(number) for number in re.findall(r"\d+", usage_line)] == [3, 3000, 300]
 
 
 @pytest.mark.parametrize("missing", ["--transcript", "--chat", "--out"])

@@ -238,7 +238,18 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
     del solape estricto de la deduplicación del juez.
   - Códigos de salida: 0 correcto, 1 error fatal, 2 argumentos incorrectos
     (`argparse`), 130 interrumpido.
-  - Un candidato que falla no es fatal.
+  - Regla del arquitecto sobre fallos de candidatos:
+    - Si había candidatos y ninguno produce un momento (todos fallan en el
+      juez o no tienen transcripción en su ventana), el CLI sale con 1 y no
+      escribe ni sobrescribe el fichero de salida. Imprime los errores y el
+      uso del juez, pero ni `Moments:`, ni la evaluación, ni la línea de
+      revisión pendiente, y `main()` muestra
+      `error: all N candidates failed; output not written` en stderr.
+    - Cero candidatos del generador no es un error: sale con 0 y escribe `[]`.
+    - Fallos parciales: sale con 0, escribe los momentos y lista los errores.
+  - Un `Judge` que lanza algo distinto de `JudgeError` o `ValueError` no se
+    traga: el CLI falla con traza. En v0 es lo honesto, porque indica un fallo
+    del propio juez y no del candidato.
   - La ruta de salida se valida antes de cualquier llamada al juez.
   - Los datos sintéticos viven en `examples/demo/`: 90 minutos, línea base de
     12 mensajes por minuto, picos en los minutos 10, 33, 34 y 70, y una
@@ -251,9 +262,11 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   conocido.
 - **Implica:**
   - La SPEC §9 y §10 reflejan `--reference` y el formato JSON o CSV.
-  - Un fallo en todos los candidatos (clave inválida, cuota agotada) sigue
-    saliendo con 0 y escribiendo `[]`: queda a la espera de una decisión del
-    arquitecto.
+  - Un fallo en todos los candidatos (clave inválida, cuota agotada) ya no
+    se confunde con "no hay momentos": sale con 1 sin tocar la salida, así una
+    corrida anterior no se pierde por un fallo del proveedor.
+  - La fase 4 no cierra el v0 por sí sola: el v0 se cierra cuando la corrida
+    con un VOD real (SPEC §10) esté registrada en la nota de sesión.
   - Sin espera entre llamadas: la ejecución real dirá cuántos 429 aparecen en
     el tier gratuito y entonces se toma una decisión nueva.
 
