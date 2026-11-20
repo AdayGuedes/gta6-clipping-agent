@@ -18,6 +18,17 @@ def hhmmss_to_seconds(text: str) -> int:
     return hours * 3600 + minutes * 60 + seconds
 
 
+def seconds_to_hhmmss(seconds: float) -> str:
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        raise InvalidTime(f"expected a number of seconds, got {seconds!r}")
+    if not math.isfinite(seconds) or seconds < 0:
+        raise InvalidTime(f"time must be finite and non-negative, got {seconds!r}")
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def parse_time(value: object) -> float:
     if isinstance(value, bool) or value is None:
         raise InvalidTime(f"expected seconds or HH:MM:SS, got {value!r}")

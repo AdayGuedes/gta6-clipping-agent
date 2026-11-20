@@ -1,6 +1,9 @@
 """Phase 0: checks that the repo structure and basic rules are in place."""
 
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,7 +48,24 @@ def test_env_example_has_no_values():
 
 
 def test_no_real_env_in_the_repo():
-    assert not (ROOT / ".env").exists()
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", ".env"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+        )
+        inside_repo = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("git is not available")
+    if inside_repo.returncode != 0:
+        pytest.skip("not a git repository")
+    assert result.returncode != 0, ".env must not be tracked by git"
 
 
 def test_claude_md_states_the_hard_restrictions():

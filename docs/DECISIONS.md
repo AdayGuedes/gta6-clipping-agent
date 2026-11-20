@@ -169,6 +169,42 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   varios candidatos que pueden solaparse en el tiempo. La fase 3 aplica el
   redondeo half-up al pasar de `Candidate` a `Moment`.
 
+## D12 · 2026-11-19 · El juez va tras una interfaz; Gemini (tier gratuito) como primer proveedor
+
+- **Decisión:**
+  1. El juez se implementa tras una interfaz `Judge`
+     (`judge(candidate, segments) -> Judgment`). El pipeline depende de la
+     interfaz, no de un proveedor.
+  2. El primer proveedor es la API de Gemini en tier gratuito (`GeminiJudge`,
+     SDK oficial `google-genai`). Es decisión de Aday no gastar en APIs.
+  3. Los tests nunca llaman a la API real: el cliente del SDK se sustituye por
+     un doble.
+  4. Una implementación asistida por Claude Code podrá añadirse después como
+     otro `Judge`, sin tocar el pipeline.
+- **Por qué:** el juez es la única pieza que depende de un proveedor externo.
+  Dejarlo tras una interfaz permite empezar con coste cero y cambiar de
+  proveedor, o de modo de uso, sin reescribir nada más.
+- **Implica:**
+  - D12 supera a D2 y D3 solo en lo que toca al proveedor. "SDK oficial de
+    Anthropic" (D2) y "Claude solo juzga" (D3) quedan como historia fechada: el
+    juez es ahora un LLM de proveedor intercambiable. El resto de D2 y D3 sigue
+    vigente, en particular que `reaccion_chat` la calcula código y el juez
+    nunca la estima.
+  - SPEC §3, §5, §7, §7.2 y §8, y la restricción 4 y la pila de CLAUDE.md,
+    pasan a lenguaje de proveedor neutro. `.env.example` lista
+    `GEMINI_API_KEY` y `GEMINI_MODEL`, sin valores; el modelo por defecto es
+    `gemini-3.8-flash`.
+  - La interfaz no recibe el error del intento anterior, así que el reintento
+    de la SPEC §8 repite la llamada sin pasarle el error. La SPEC §8 se ajusta
+    a eso.
+  - Un error de la API (cuota del tier gratuito, red) cuenta como fallo del
+    candidato tras el reintento, sin espera entre intentos en v0.
+  - `GeminiJudge` acumula llamadas y tokens de entrada y de salida
+    (`usage_metadata`) para cumplir la SPEC §8; la impresión queda para la CLI
+    de la fase 4.
+  - Las condiciones del tier gratuito pueden permitir a Google usar lo que se
+    envía. Hoy solo se envían transcripciones de directos públicos.
+
 ## Propuestas
 
 Ninguna por ahora.

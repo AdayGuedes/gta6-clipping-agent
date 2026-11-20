@@ -14,7 +14,7 @@ El estado de cada fase está en [PROGRESS.md](PROGRESS.md).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # y rellena ANTHROPIC_API_KEY
+cp .env.example .env        # y rellena GEMINI_API_KEY
 ruff check . && black --check . && python -m pytest   # lo mismo que ejecuta el CI
 ```
 

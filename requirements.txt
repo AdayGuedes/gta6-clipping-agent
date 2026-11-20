@@ -1,4 +1,6 @@
 pydantic>=2.12,<3
+google-genai>=3,<4
+python-dotenv>=1,<2
 pytest>=8
 ruff>=0.17,<0.18
 black>=26,<27
