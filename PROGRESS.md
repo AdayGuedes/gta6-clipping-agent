@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Fase actual:** Fase 2 hecha, PR pendiente de fusión. Fase 3 pendiente de OK.
+**Fase actual:** Fase 3 hecha, PR pendiente de fusión. Fase 4 pendiente de OK.
 
 ## Fases v0
 
@@ -10,5 +10,6 @@
       (2026-11-17, [nota](docs/sessions/2026-11-17-fase-1.md))
 - [x] Fase 2 generador de candidatos por picos de chat
       (2026-11-17, [nota](docs/sessions/2026-11-17-fase-2.md))
-- [ ] Fase 3 juez con Claude API y salida JSON validada
+- [x] Fase 3 juez LLM tras una interfaz (Gemini, tier gratuito) y salida JSON
+      validada (2026-11-19, [nota](docs/sessions/2026-11-19-fase-3.md))
 - [ ] Fase 4 CLI de punta a punta y prueba con datos reales

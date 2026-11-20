@@ -1,11 +1,11 @@
 # SPEC v0 — gta6-clipping-agent
 
-Versión: v0 · Fecha: 2026-11-17 · Revisada con D5 (ver docs/DECISIONS.md)
+Versión: v0 · Fecha: 2026-11-17 · Revisada con D5 y D12 (ver docs/DECISIONS.md)
 
 ## 1. Contexto
 
-Clips de GTA 6 de streamers en español, sacados de VODs. Un VOD es la
-grabación de un directo ya terminado.
+Clips de GTA 6 de streamers en español o en inglés, sacados de VODs. Un VOD es
+la grabación de un directo ya terminado.
 
 ## 2. Objetivo
 
@@ -18,7 +18,7 @@ revisa un humano. El sistema no edita vídeo ni publica nada.
 ficheros locales (transcripción, chat)
   → cargadores                           (fase 1)  → segments, chat_events
   → generador de candidatos, sin IA      (fase 2)  → hasta 20 candidatos con reaccion_chat
-  → juez con la API de Claude            (fase 3)  → momentos puntuados y validados
+  → juez LLM tras una interfaz           (fase 3)  → momentos puntuados y validados
   → orden por puntuación, top 5          (fase 3)
   → CLI → resultados.json                (fase 4)
 ```
@@ -82,11 +82,11 @@ momentos como máximo.
 | `inicio`, `fin`           | formato `HH:MM:SS`, `inicio` < `fin`, dentro de la ventana candidata |
 | `puntuacion`              | entero 0-100, igual a la suma de `desglose`                         |
 | `desglose.reaccion_chat`  | 0-30, calculado por código (sección 7.1)                            |
-| `desglose.contexto`       | 0-25, lo juzga Claude                                               |
-| `desglose.novedad`        | 0-25, lo juzga Claude                                               |
-| `desglose.gancho`         | 0-20, lo juzga Claude                                               |
+| `desglose.contexto`       | 0-25, lo juzga el LLM juez                                          |
+| `desglose.novedad`        | 0-25, lo juzga el LLM juez                                          |
+| `desglose.gancho`         | 0-20, lo juzga el LLM juez                                          |
 | `categoria`               | una de la lista cerrada (sección 6)                                 |
-| `gancho`                  | texto propuesto para el gancho del clip                             |
+| `gancho`                  | gancho propuesto, en el idioma dominante de la transcripción        |
 | `chat.msg_min`            | mensajes por minuto en la ventana del pico                          |
 | `chat.multiplicador`      | `msg_min` / línea base del VOD                                      |
 
@@ -102,9 +102,9 @@ Cualquier otro valor no valida.
 | Criterio                      | Puntos | Quién lo mide           |
 |-------------------------------|--------|-------------------------|
 | Reacción de viewers           | 0-30   | código (conteo de chat) |
-| Se entiende sin contexto      | 0-25   | Claude                  |
-| Novedad de GTA 6              | 0-25   | Claude                  |
-| Fuerza del gancho             | 0-20   | Claude                  |
+| Se entiende sin contexto      | 0-25   | LLM juez                |
+| Novedad de GTA 6              | 0-25   | LLM juez                |
+| Fuerza del gancho             | 0-20   | LLM juez                |
 
 ### 7.1 Reacción de viewers (0-30): la mide el código
 
@@ -155,7 +155,7 @@ se fusionan picos a 2 minutos o menos, y un grupo largo de picos seguidos puede
 partirse en candidatos solapados. Después se quedan como máximo los 20 mejores,
 cada uno con sus puntos de `reaccion_chat` ya calculados.
 
-### 7.2 Criterios que juzga Claude
+### 7.2 Criterios que juzga el LLM juez
 
 - **Se entiende sin contexto (0-25):** el momento se entiende sin haber visto
   el resto del directo.
@@ -163,18 +163,23 @@ cada uno con sus puntos de `reaccion_chat` ya calculados.
 - **Fuerza del gancho (0-20):** cuánto engancha el momento y el gancho
   propuesto.
 
-## 8. Juez (Claude)
+## 8. Juez (LLM)
 
+- El juez va tras una interfaz `Judge`: `judge(candidate, segments)`
+  devuelve un `Judgment`. El primer proveedor es la API de Gemini en tier
+  gratuito; otro proveedor se añade sin tocar el resto (D12).
 - Recibe SOLO los candidatos de la fase 2, cada uno con su trozo de
   transcripción. Nunca recibe el VOD entero.
 - Ajusta `inicio`/`fin` fino dentro de la ventana candidata. No puede
   devolver timestamps fuera de ella.
 - Puntúa contexto, novedad y gancho según la rúbrica, asigna una categoría de
-  la lista cerrada y escribe el gancho.
+  la lista cerrada y escribe el gancho en el idioma dominante de la
+  transcripción (español o inglés).
 - Su salida es estructurada y se valida con pydantic contra el esquema de la
   sección 5.
-- Si la salida no valida, reintenta una vez pasándole el error. Si vuelve a
-  fallar, registra el fallo y sigue con el resto de candidatos.
+- Si la salida no valida (o trae tiempos fuera de la ventana, o falla la
+  llamada), se repite la llamada una vez. Si vuelve a fallar, se registra el
+  fallo y se sigue con el resto de candidatos.
 - Puntuación total = `reaccion_chat` (ya calculada por código) + las tres
   puntuaciones del juez. Se ordena de mayor a menor.
 - En cada ejecución registra cuántas llamadas a la API se hicieron y los

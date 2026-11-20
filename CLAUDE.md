@@ -6,9 +6,9 @@ sobre cualquier idea de mejora que surja por el camino.
 ## Qué es
 
 Detector agéntico de momentos clipeables de GTA 6 en VODs de streamers en
-español. Es un proyecto de aprendizaje de AI Engineering aplicado: cada pieza
-tiene que poder entenderse, por eso el orquestador es nuestro, simple y
-explícito. La spec completa está en [SPEC.md](SPEC.md).
+español o en inglés. Es un proyecto de aprendizaje de AI Engineering aplicado:
+cada pieza tiene que poder entenderse, por eso el orquestador es nuestro,
+simple y explícito. La spec completa está en [SPEC.md](SPEC.md).
 
 ## Restricciones duras
 
@@ -24,7 +24,8 @@ explícito. La spec completa está en [SPEC.md](SPEC.md).
 3. **La reacción del chat la mide código determinista.** El LLM nunca estima
    `reaccion_chat`; solo juzga contexto, novedad y gancho.
 4. **Sin frameworks de agentes en v0.** Nada de LangChain, LangGraph ni
-   similares. Se usa directamente el SDK oficial de Anthropic.
+   similares. El juez usa directamente el SDK oficial de su proveedor,
+   tras la interfaz `Judge` (D12).
 5. **Los secretos no entran en el repo.** La API key va en `.env`, que está en
    `.gitignore`. `.env.example` lista las variables sin valores.
 6. **No se añade nada fuera de alcance sin preguntar.** La arquitectura y las
@@ -35,7 +36,7 @@ explícito. La spec completa está en [SPEC.md](SPEC.md).
 ## Stack
 
 - Python 3.11+
-- `anthropic` (SDK oficial)
+- `google-genai` (SDK oficial de Gemini, para el juez, D12)
 - `pydantic` (modelos internos y validación de la salida del juez)
 - `pytest`
 - `python-dotenv`
@@ -62,7 +63,7 @@ tests/             tests (pytest)
   hacer y por qué, y esperar el OK.
 - Una fase solo está hecha con todos los tests en verde. Si un test falla, la
   fase no se marca como hecha.
-- Ningún test llama a la API real de Claude: la API siempre se mockea.
+- Ningún test llama a la API real del juez: la API siempre se mockea.
 - Al cerrar cada fase:
   1. tests en verde (`python -m pytest`);
   2. actualizar PROGRESS.md;

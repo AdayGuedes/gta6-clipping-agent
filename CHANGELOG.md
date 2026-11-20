@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add GitHub Actions CI with ruff, black and pytest
 - Add pydantic models and JSON/CSV loaders for transcript and chat
 - Add chat-peak candidate generator with reaction points (D10)
+- Add LLM judge behind a Judge interface, with Gemini free tier as first provider (D12)
 
 ### Changed
 

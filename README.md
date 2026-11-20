@@ -1,8 +1,8 @@
 # gta6-clipping-agent
 
-Detector de momentos clipeables de GTA 6 en VODs de streamers en español.
-Recibe la transcripción y el chat de un VOD y propone los 5 mejores momentos
-para clipear en un JSON.
+Detector de momentos clipeables de GTA 6 en VODs de streamers en español o en
+inglés. Recibe la transcripción y el chat de un VOD y propone los 5 mejores
+momentos para clipear en un JSON.
 
 No publica nada: la revisión y la subida de clips se hacen a mano.
 
@@ -14,7 +14,7 @@ El estado de cada fase está en [PROGRESS.md](PROGRESS.md).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # y rellena ANTHROPIC_API_KEY
+cp .env.example .env        # y rellena GEMINI_API_KEY
 ruff check . && black --check . && python -m pytest   # lo mismo que ejecuta el CI
 ```
 

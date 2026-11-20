@@ -1,6 +1,11 @@
 import pytest
 
-from src.timeparse import InvalidTime, hhmmss_to_seconds, parse_time
+from src.timeparse import (
+    InvalidTime,
+    hhmmss_to_seconds,
+    parse_time,
+    seconds_to_hhmmss,
+)
 
 
 @pytest.mark.parametrize(
@@ -61,6 +66,38 @@ def test_parse_time_accepts_numbers_and_hhmmss(value, expected):
 def test_parse_time_rejects_invalid_values(value):
     with pytest.raises(ValueError):
         parse_time(value)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (0, "00:00:00"),
+        (65, "00:01:05"),
+        (5025, "01:23:45"),
+        (360000, "100:00:00"),
+        (59.999, "00:00:59"),
+        (100.2, "00:01:40"),
+    ],
+)
+def test_seconds_to_hhmmss(seconds, expected):
+    assert seconds_to_hhmmss(seconds) == expected
+
+
+@pytest.mark.parametrize("seconds", [0, 1, 59, 60, 3599, 3600, 5025, 86399, 360000])
+def test_seconds_to_hhmmss_is_the_inverse_of_hhmmss_to_seconds(seconds):
+    assert hhmmss_to_seconds(seconds_to_hhmmss(seconds)) == seconds
+
+
+def test_seconds_to_hhmmss_truncates_so_close_times_can_collide():
+    assert seconds_to_hhmmss(100.2) == seconds_to_hhmmss(100.4)
+
+
+@pytest.mark.parametrize(
+    "seconds", [-1, -0.5, float("nan"), float("inf"), True, None, "12"]
+)
+def test_seconds_to_hhmmss_rejects_invalid_values(seconds):
+    with pytest.raises(InvalidTime):
+        seconds_to_hhmmss(seconds)
 
 
 def test_invalid_time_is_a_value_error():
