@@ -7,6 +7,7 @@ from src.evaluate import (
     EvaluationReport,
     evaluate,
     format_report,
+    window_matches,
 )
 from src.models import Breakdown, Chat, Moment, ReferenceClip
 from src.timeparse import seconds_to_hhmmss
@@ -181,3 +182,61 @@ def test_format_report_with_hours_and_fractional_seconds():
         "Evaluation: 0/1 reference clips detected (tolerance +/-60 s)",
         "  - 01:23:45-01:25:00: missed",
     ]
+
+
+@pytest.mark.parametrize(
+    ("start_s", "end_s", "expected"),
+    [
+        (1010, 1020, True),
+        (900, 1200, True),
+        (1000, 1030, True),
+        (900, 940, True),
+        (900, 939, False),
+        (900, 939.9, False),
+        (1090, 1130, True),
+        (1091, 1130, False),
+        (1090.1, 1130, False),
+        (3000, 3040, False),
+        (0, 10, False),
+    ],
+)
+def test_window_matches_uses_a_sixty_second_tolerance_with_inclusive_edges(
+    start_s, end_s, expected
+):
+    assert window_matches(start_s, end_s, make_clip()) is expected
+
+
+def test_window_matches_accepts_floats_and_the_exact_tolerance_edges():
+    clip = make_clip(1000.5, 1030.5)
+
+    assert window_matches(800.0, 940.5, clip) is True
+    assert window_matches(800.0, 940.4, clip) is False
+    assert window_matches(1090.5, 1200.0, clip) is True
+    assert window_matches(1090.6, 1200.0, clip) is False
+
+
+@pytest.mark.parametrize(
+    ("start_s", "end_s"),
+    [(990, 1020), (900, 940), (900, 939), (1090, 1130), (1091, 1130), (3000, 3040)],
+)
+def test_evaluate_agrees_with_window_matches(start_s, end_s):
+    clip = make_clip()
+
+    detected = detected_flags([make_moment(start_s, end_s)], [clip])
+
+    assert detected == [window_matches(start_s, end_s, clip)]
+
+
+def test_evaluate_routes_the_criterion_through_window_matches(monkeypatch):
+    calls = []
+
+    def always_true(start_s, end_s, clip):
+        calls.append((start_s, end_s, clip))
+        return True
+
+    monkeypatch.setattr("src.evaluate.window_matches", always_true)
+
+    detected = detected_flags([make_moment(3000, 3040)], [make_clip()])
+
+    assert detected == [True]
+    assert calls == [(3000, 3040, make_clip())]

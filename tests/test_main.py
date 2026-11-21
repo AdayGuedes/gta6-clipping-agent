@@ -12,10 +12,13 @@ from google.genai import types
 
 import src.judge as judge_module
 import src.main as main_module
-from src.judge import GeminiJudge, JudgeError, Judgment
-from src.loaders import LoadError
+from src.evaluate import window_matches
+from src.judge import MAX_MOMENTS, GeminiJudge, JudgeError, Judgment
+from src.loaders import LoadError, load_chat, load_reference
 from src.main import EXIT_FATAL, EXIT_OK, PENDING_REVIEW, ReportsUsage, main, run
 from src.models import Moment
+from src.peaks import InsufficientChatError, generate_candidates
+from src.timeparse import seconds_to_hhmmss
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "examples" / "demo"
@@ -26,6 +29,32 @@ REFERENCE = DEMO / "reference.json"
 HOOK_A = "Mira esto, qué locura"
 HOOK_B = "¡Qué barbaridad, el coche vuela por España!"
 HOOK_C = "Nadie esperaba esta caída"
+HOOK_QUIET = "Un minuto tranquilo pero con tema"
+HOOK_FILLER = "Relleno sin interés"
+
+PLANTED_STARTS = (540.0, 1978.0, 4139.0)
+QUIET_START = 3005.0
+FILLER_STARTS = (
+    5.0,
+    305.0,
+    660.0,
+    905.0,
+    1205.0,
+    1505.0,
+    1805.0,
+    2105.0,
+    2405.0,
+    2705.0,
+    3005.0,
+    3305.0,
+    3605.0,
+    3905.0,
+    4259.0,
+    4505.0,
+    4805.0,
+)
+DEMO_STARTS = (*PLANTED_STARTS, *FILLER_STARTS)
+CANDIDATE_LENGTH_S = 135.0
 
 SPEC_MOMENT_KEYS = {
     "inicio",
@@ -40,10 +69,10 @@ SPEC_BREAKDOWN_KEYS = {"reaccion_chat", "contexto", "novedad", "gancho"}
 SPEC_CHAT_KEYS = {"msg_min", "multiplicador"}
 
 EVALUATION_LINES = [
-    "Evaluation: 2/3 reference clips detected (tolerance +/-60 s)",
+    "Evaluation: 3/3 reference clips detected (tolerance +/-60 s)",
     "  - 00:10:10-00:10:40: detected",
     "  - 00:33:30-00:34:10: detected",
-    "  - 00:50:00-00:50:30: missed",
+    "  - 00:50:00-00:50:30: detected",
 ]
 
 
@@ -72,32 +101,52 @@ def make_judgment(start_s, end_s, hook, context, novelty, hook_score, **override
     return Judgment(**values)
 
 
-def demo_outcomes():
+def planted_outcomes():
     return {
         540.0: [make_judgment(600, 650, HOOK_A, 10, 10, 5)],
-        1920.0: [
+        1978.0: [
             make_judgment(2010, 2050, HOOK_B, 22, 18, 15, category="bug gracioso")
         ],
-        4140.0: [make_judgment(4200, 4240, HOOK_C, 15, 10, 10)],
+        4139.0: [make_judgment(4200, 4240, HOOK_C, 15, 10, 10)],
     }
 
 
+def demo_outcomes():
+    outcomes = planted_outcomes()
+    outcomes[QUIET_START] = [make_judgment(3010, 3050, HOOK_QUIET, 8, 5, 5)]
+    return outcomes
+
+
+def filler_outcome(candidate):
+    return make_judgment(
+        candidate.start_s + 10, candidate.start_s + 50, HOOK_FILLER, 2, 2, 1
+    )
+
+
+def failing_default(message="down"):
+    return lambda candidate: JudgeError(message)
+
+
 class FakeJudge:
-    def __init__(self, outcomes):
+    def __init__(self, outcomes, default=filler_outcome):
         self._outcomes = {key: list(values) for key, values in outcomes.items()}
+        self._default = default
         self.requests = []
 
     def judge(self, candidate, segments):
         self.requests.append(candidate)
-        outcome = self._outcomes[candidate.start_s].pop(0)
+        if candidate.start_s in self._outcomes:
+            outcome = self._outcomes[candidate.start_s].pop(0)
+        else:
+            outcome = self._default(candidate)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
 
 
 class UsageJudge(FakeJudge):
-    def __init__(self, outcomes):
-        super().__init__(outcomes)
+    def __init__(self, outcomes, default=filler_outcome):
+        super().__init__(outcomes, default)
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -129,7 +178,7 @@ def write_json(tmp_path, name, content):
 # run: output file
 
 
-def test_output_holds_exactly_the_expected_moments_sorted_by_score(tmp_path):
+def test_output_holds_the_top_five_moments_sorted_by_score(tmp_path):
     _, out_path, _ = run_demo(tmp_path, FakeJudge(demo_outcomes()))
 
     assert read_output(out_path) == [
@@ -175,7 +224,46 @@ def test_output_holds_exactly_the_expected_moments_sorted_by_score(tmp_path):
             "gancho": HOOK_A,
             "chat": {"msg_min": 60.0, "multiplicador": 5.0},
         },
+        {
+            "inicio": "00:50:10",
+            "fin": "00:50:50",
+            "puntuacion": 20,
+            "desglose": {
+                "reaccion_chat": 2,
+                "contexto": 8,
+                "novedad": 5,
+                "gancho": 5,
+            },
+            "categoria": "jugada",
+            "gancho": HOOK_QUIET,
+            "chat": {"msg_min": 13.0, "multiplicador": 13 / 12},
+        },
+        {
+            "inicio": "00:00:15",
+            "fin": "00:00:55",
+            "puntuacion": 7,
+            "desglose": {
+                "reaccion_chat": 2,
+                "contexto": 2,
+                "novedad": 2,
+                "gancho": 1,
+            },
+            "categoria": "jugada",
+            "gancho": HOOK_FILLER,
+            "chat": {"msg_min": 13.0, "multiplicador": 13 / 12},
+        },
     ]
+
+
+def test_output_is_capped_at_the_moment_limit_although_twenty_are_judged(tmp_path):
+    judge = FakeJudge(demo_outcomes())
+
+    moments, out_path, _ = run_demo(tmp_path, judge)
+
+    assert MAX_MOMENTS == 5
+    assert len(judge.requests) == 20
+    assert len(moments) == MAX_MOMENTS
+    assert len(read_output(out_path)) == MAX_MOMENTS
 
 
 def test_output_is_sorted_by_puntuacion_descending(tmp_path):
@@ -184,7 +272,7 @@ def test_output_is_sorted_by_puntuacion_descending(tmp_path):
     scores = [moment["puntuacion"] for moment in read_output(out_path)]
 
     assert scores == sorted(scores, reverse=True)
-    assert len(scores) == 3
+    assert scores == [83, 56, 54, 20, 7]
 
 
 def test_output_follows_the_spec_shape(tmp_path):
@@ -202,7 +290,7 @@ def test_output_entries_validate_as_moments(tmp_path):
 
     moments = [Moment.model_validate(entry) for entry in read_output(out_path)]
 
-    assert len(moments) == 3
+    assert len(moments) == 5
 
 
 def test_returned_moments_match_the_file(tmp_path):
@@ -232,19 +320,48 @@ def test_output_is_utf8_with_a_trailing_newline(tmp_path):
     assert not raw.startswith(b"\xef\xbb\xbf")
 
 
-def test_judge_receives_the_three_demo_candidates(tmp_path):
+def test_judge_receives_the_twenty_demo_candidates_planted_peaks_first(tmp_path):
     judge = FakeJudge(demo_outcomes())
 
     run_demo(tmp_path, judge)
 
+    planted = judge.requests[:3]
+    fillers = judge.requests[3:]
+    assert len(judge.requests) == 20
     assert [
         (c.start_s, c.end_s, c.msg_min, c.multiplier, c.reaction_points)
-        for c in judge.requests
+        for c in planted
     ] == [
         (540.0, 675.0, 60, 5.0, 29.0),
-        (1920.0, 2115.0, 48, 4.0, 28.0),
-        (4140.0, 4275.0, 30, 2.5, 21.0),
+        (1978.0, 2113.0, 48, 4.0, 28.0),
+        (4139.0, 4274.0, 30, 2.5, 21.0),
     ]
+    assert [c.start_s for c in fillers] == list(FILLER_STARTS)
+    assert all(c.end_s - c.start_s == CANDIDATE_LENGTH_S for c in fillers)
+    assert all(c.msg_min == 13 for c in fillers)
+    assert all(c.multiplier == pytest.approx(13 / 12) for c in fillers)
+    assert all(c.reaction_points == pytest.approx(5 / 3) for c in fillers)
+    assert all(c.reaction_points < 2 for c in fillers)
+
+
+def test_demo_candidates_start_with_the_planted_peaks_and_then_fill_up_to_twenty():
+    candidates = generate_candidates(load_chat(CHAT))
+
+    assert [c.start_s for c in candidates] == list(DEMO_STARTS)
+    assert [c.reaction_points for c in candidates[:3]] == [29.0, 28.0, 21.0]
+    assert all(c.reaction_points < 2 for c in candidates[3:])
+
+
+def test_demo_reference_no_longer_discriminates_because_twenty_candidates_cover_all_clips():
+    candidates = generate_candidates(load_chat(CHAT))
+    reference = load_reference(REFERENCE)
+
+    covered = [
+        any(window_matches(c.start_s, c.end_s, clip) for c in candidates)
+        for clip in reference
+    ]
+
+    assert covered == [True, True, True]
 
 
 # run: printed lines
@@ -254,7 +371,7 @@ def test_printed_lines_without_reference_and_without_usage(tmp_path):
     _, out_path, lines = run_demo(tmp_path, FakeJudge(demo_outcomes()))
 
     assert lines == [
-        f"Moments: 3 written to {out_path}",
+        f"Moments: 5 written to {out_path}",
         "Candidate errors: 0",
         "Judge usage: not reported by this judge",
         PENDING_REVIEW,
@@ -266,7 +383,7 @@ def test_usage_line_reports_calls_and_tokens(tmp_path):
 
     _, _, lines = run_demo(tmp_path, judge)
 
-    assert "Judge usage: 3 calls, 300 input tokens, 75 output tokens" in lines
+    assert "Judge usage: 20 calls, 2000 input tokens, 500 output tokens" in lines
     assert "Judge usage: not reported by this judge" not in lines
 
 
@@ -296,47 +413,57 @@ def test_a_candidate_failing_twice_is_reported_and_not_fatal(tmp_path):
 
     moments, out_path, lines = run_demo(tmp_path, judge)
 
-    assert len(moments) == 2
-    assert [m["gancho"] for m in read_output(out_path)] == [HOOK_B, HOOK_C]
+    assert len(moments) == MAX_MOMENTS
+    hooks = [m["gancho"] for m in read_output(out_path)]
+    assert hooks == [HOOK_B, HOOK_C, HOOK_QUIET, HOOK_FILLER, HOOK_FILLER]
+    assert HOOK_A not in hooks
     assert lines == [
-        f"Moments: 2 written to {out_path}",
+        f"Moments: 5 written to {out_path}",
         "Candidate errors: 1",
         "  - candidate 00:09:00-00:11:15: rate limited",
         "Judge usage: not reported by this judge",
         PENDING_REVIEW,
     ]
     assert [c.start_s for c in judge.requests].count(540.0) == 2
+    assert len(judge.requests) == 21
 
 
 def test_every_failing_candidate_gets_its_own_error_line(tmp_path):
-    outcomes = {
-        540.0: [JudgeError("first"), JudgeError("first")],
-        1920.0: [JudgeError("second"), JudgeError("second")],
-        4140.0: [make_judgment(4200, 4240, HOOK_C, 15, 10, 10)],
-    }
+    outcomes = demo_outcomes()
+    outcomes[540.0] = [JudgeError("first"), JudgeError("first")]
+    outcomes[1978.0] = [JudgeError("second"), JudgeError("second")]
 
     _, _, lines = run_demo(tmp_path, FakeJudge(outcomes))
 
     assert lines[1:4] == [
         "Candidate errors: 2",
         "  - candidate 00:09:00-00:11:15: first",
-        "  - candidate 00:32:00-00:35:15: second",
+        "  - candidate 00:32:58-00:35:13: second",
     ]
 
 
-def failing_outcomes(message="down"):
-    return {key: [JudgeError(message), JudgeError(message)] for key in demo_outcomes()}
+def failing_judge(judge_class, message="down"):
+    return judge_class({}, default=failing_default(message))
+
+
+def demo_window_label(start_s):
+    return (
+        f"candidate {seconds_to_hhmmss(start_s)}-"
+        f"{seconds_to_hhmmss(start_s + CANDIDATE_LENGTH_S)}"
+    )
+
+
+def demo_error_lines(reason):
+    return [f"  - {demo_window_label(start_s)}: {reason}" for start_s in DEMO_STARTS]
 
 
 TOTAL_FAILURE_LINES = [
-    "Candidate errors: 3",
-    "  - candidate 00:09:00-00:11:15: down",
-    "  - candidate 00:32:00-00:35:15: down",
-    "  - candidate 01:09:00-01:11:15: down",
+    "Candidate errors: 20",
+    *demo_error_lines("down"),
     "Judge usage: not reported by this judge",
 ]
 
-TOTAL_FAILURE_MESSAGE = "all 3 candidates failed; output not written"
+TOTAL_FAILURE_MESSAGE = "all 20 candidates failed; output not written"
 
 
 def run_total_failure(tmp_path, judge, reference=None, out_path=None):
@@ -347,8 +474,17 @@ def run_total_failure(tmp_path, judge, reference=None, out_path=None):
     return error_info.value, stream.getvalue().splitlines()
 
 
+def test_the_demo_error_labels_start_with_the_planted_windows():
+    assert demo_error_lines("x")[:3] == [
+        "  - candidate 00:09:00-00:11:15: x",
+        "  - candidate 00:32:58-00:35:13: x",
+        "  - candidate 01:08:59-01:11:14: x",
+    ]
+    assert len(TOTAL_FAILURE_LINES) == 22
+
+
 def test_all_candidates_failing_raises_and_does_not_create_the_output(tmp_path):
-    error, _ = run_total_failure(tmp_path, FakeJudge(failing_outcomes()))
+    error, _ = run_total_failure(tmp_path, failing_judge(FakeJudge))
 
     assert str(error) == TOTAL_FAILURE_MESSAGE
     assert not (tmp_path / "resultados.json").exists()
@@ -364,13 +500,13 @@ def test_all_candidates_failing_keeps_an_existing_output_byte_for_byte(tmp_path)
     previous = b'[{"previous": "run"}]\n'
     out_path.write_bytes(previous)
 
-    run_total_failure(tmp_path, FakeJudge(failing_outcomes()), out_path=out_path)
+    run_total_failure(tmp_path, failing_judge(FakeJudge), out_path=out_path)
 
     assert out_path.read_bytes() == previous
 
 
 def test_all_candidates_failing_prints_only_the_errors_and_the_usage(tmp_path):
-    _, lines = run_total_failure(tmp_path, FakeJudge(failing_outcomes()))
+    _, lines = run_total_failure(tmp_path, failing_judge(FakeJudge))
 
     assert lines == TOTAL_FAILURE_LINES
     assert not any(line.startswith("Moments:") for line in lines)
@@ -378,13 +514,13 @@ def test_all_candidates_failing_prints_only_the_errors_and_the_usage(tmp_path):
 
 
 def test_all_candidates_failing_prints_the_usage_of_a_reporting_judge(tmp_path):
-    _, lines = run_total_failure(tmp_path, UsageJudge(failing_outcomes()))
+    _, lines = run_total_failure(tmp_path, failing_judge(UsageJudge))
 
-    assert lines[-1] == "Judge usage: 6 calls, 600 input tokens, 150 output tokens"
+    assert lines[-1] == "Judge usage: 40 calls, 4000 input tokens, 1000 output tokens"
 
 
 def test_all_candidates_failing_prints_no_evaluation_with_a_reference(tmp_path):
-    judge = FakeJudge(failing_outcomes())
+    judge = failing_judge(FakeJudge)
 
     error, lines = run_total_failure(tmp_path, judge, reference=REFERENCE)
 
@@ -404,16 +540,14 @@ def test_candidates_without_transcript_all_fail_like_judge_errors(tmp_path):
     out_path = tmp_path / "resultados.json"
     stream = io.StringIO()
 
-    with pytest.raises(main_module.AllCandidatesFailedError, match="all 3 candidates"):
+    with pytest.raises(main_module.AllCandidatesFailedError, match="all 20 candidates"):
         run(transcript, CHAT, out_path, judge, None, stream)
 
     assert judge.requests == []
     assert not out_path.exists()
     assert stream.getvalue().splitlines() == [
-        "Candidate errors: 3",
-        "  - candidate 00:09:00-00:11:15: no transcript in the window",
-        "  - candidate 00:32:00-00:35:15: no transcript in the window",
-        "  - candidate 01:09:00-01:11:15: no transcript in the window",
+        "Candidate errors: 20",
+        *demo_error_lines("no transcript in the window"),
         "Judge usage: not reported by this judge",
     ]
 
@@ -425,23 +559,65 @@ def test_reference_adds_the_evaluation_lines_before_the_pending_line(tmp_path):
     _, out_path, lines = run_demo(tmp_path, UsageJudge(demo_outcomes()), REFERENCE)
 
     assert lines == [
-        f"Moments: 3 written to {out_path}",
+        f"Moments: 5 written to {out_path}",
         "Candidate errors: 0",
-        "Judge usage: 3 calls, 300 input tokens, 75 output tokens",
+        "Judge usage: 20 calls, 2000 input tokens, 500 output tokens",
         *EVALUATION_LINES,
         PENDING_REVIEW,
     ]
 
 
-def test_evaluation_reports_two_of_three_with_the_third_clip_missed(tmp_path):
+def test_evaluation_reports_the_three_demo_clips_detected(tmp_path):
     _, _, lines = run_demo(tmp_path, FakeJudge(demo_outcomes()), REFERENCE)
 
-    assert [line for line in lines if "Evaluation" in line or "detected" in line] == [
-        EVALUATION_LINES[0],
-        EVALUATION_LINES[1],
-        EVALUATION_LINES[2],
+    assert [line for line in lines if "Evaluation" in line or "detected" in line] == (
+        EVALUATION_LINES
+    )
+
+
+def test_a_clip_whose_candidate_falls_outside_the_top_moments_is_reported_missed(
+    tmp_path,
+):
+    _, _, lines = run_demo(tmp_path, FakeJudge(planted_outcomes()), REFERENCE)
+
+    assert lines[3:7] == [
+        "Evaluation: 2/3 reference clips detected (tolerance +/-60 s)",
+        "  - 00:10:10-00:10:40: detected",
+        "  - 00:33:30-00:34:10: detected",
+        "  - 00:50:00-00:50:30: missed",
     ]
-    assert EVALUATION_LINES[3] in lines
+
+
+def far_reference(tmp_path):
+    return write_json(
+        tmp_path,
+        "far_reference.json",
+        [
+            {"start_s": 610, "end_s": 640},
+            {"start_s": 5100, "end_s": 5130},
+        ],
+    )
+
+
+def test_a_clip_far_from_every_candidate_window_is_reported_missed(tmp_path):
+    reference = far_reference(tmp_path)
+
+    _, _, lines = run_demo(tmp_path, FakeJudge(demo_outcomes()), reference)
+
+    assert lines[3:6] == [
+        "Evaluation: 1/2 reference clips detected (tolerance +/-60 s)",
+        "  - 00:10:10-00:10:40: detected",
+        "  - 01:25:00-01:25:30: missed",
+    ]
+
+
+def test_the_far_clip_is_more_than_sixty_seconds_past_the_last_candidate_window():
+    candidates = generate_candidates(load_chat(CHAT))
+
+    last_end_s = max(c.end_s for c in candidates)
+
+    assert last_end_s == 4940.0
+    assert 5100 - last_end_s > 60
 
 
 def test_no_evaluation_lines_without_reference(tmp_path):
@@ -476,17 +652,15 @@ def test_a_missing_reference_file_fails_before_any_judge_call(tmp_path):
 # run: edge cases
 
 
-def test_zero_candidates_writes_an_empty_list_and_is_not_an_error(tmp_path):
-    chat = write_json(
-        tmp_path,
-        "chat.json",
-        [{"t_s": second, "message": "hola"} for second in range(0, 600, 5)],
-    )
+def test_zero_candidates_writes_an_empty_list_and_is_not_an_error(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(main_module, "generate_candidates", lambda *a, **k: [])
     judge = FakeJudge({})
     out_path = tmp_path / "resultados.json"
     stream = io.StringIO()
 
-    moments = run(TRANSCRIPT, chat, out_path, judge, None, stream)
+    moments = run(TRANSCRIPT, CHAT, out_path, judge, None, stream)
 
     assert moments == []
     assert out_path.read_text(encoding="utf-8") == "[]\n"
@@ -497,6 +671,35 @@ def test_zero_candidates_writes_an_empty_list_and_is_not_an_error(tmp_path):
         "Judge usage: not reported by this judge",
         PENDING_REVIEW,
     ]
+
+
+def test_flat_chat_is_judged_instead_of_giving_zero_candidates(tmp_path):
+    chat = write_json(
+        tmp_path,
+        "chat.json",
+        [{"t_s": second, "message": "hola"} for second in range(0, 600, 5)],
+    )
+    judge = FakeJudge({})
+    out_path = tmp_path / "resultados.json"
+
+    moments = run(TRANSCRIPT, chat, out_path, judge, None, io.StringIO())
+
+    assert [c.start_s for c in judge.requests] == [0.0, 60.0, 180.0, 300.0, 420.0]
+    assert [c.reaction_points for c in judge.requests] == [0.0] * 5
+    assert len(moments) == 5
+    assert len(read_output(out_path)) == 5
+
+
+def test_chat_without_activity_raises_before_judging_or_writing(tmp_path):
+    chat = write_json(tmp_path, "empty_chat.json", [])
+    judge = FakeJudge({})
+    out_path = tmp_path / "resultados.json"
+
+    with pytest.raises(InsufficientChatError, match="chat sin actividad suficiente"):
+        run(TRANSCRIPT, chat, out_path, judge, None, io.StringIO())
+
+    assert judge.requests == []
+    assert not out_path.exists()
 
 
 def test_run_prints_to_stdout_by_default(tmp_path, capsys):
@@ -552,7 +755,7 @@ def test_main_happy_path_exits_zero_and_writes_the_output(tmp_path, capsys, fake
     out_path = tmp_path / "resultados.json"
     assert code == EXIT_OK == 0
     assert out_path.is_file()
-    assert len(read_output(out_path)) == 3
+    assert len(read_output(out_path)) == 5
     assert captured.out.splitlines()[-1] == PENDING_REVIEW
     assert captured.err == ""
 
@@ -593,6 +796,57 @@ def test_main_bad_reference_exits_one_without_judging(tmp_path, capsys, fake_jud
     assert not (tmp_path / "resultados.json").exists()
 
 
+def test_main_empty_reference_exits_one_without_judging(tmp_path, capsys, fake_judge):
+    reference = write_json(tmp_path, "empty_reference.json", [])
+
+    code = main(cli_args(tmp_path, **{"--reference": reference}))
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.err == "error: empty_reference.json: reference has no clips\n"
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
+@pytest.mark.parametrize("last_s", [172801, 1e9, 1e15])
+def test_main_chat_longer_than_48_hours_exits_one_without_judging(
+    tmp_path, capsys, fake_judge, last_s
+):
+    chat = write_json(
+        tmp_path,
+        "chat.json",
+        [{"t_s": 5, "message": "x"}, {"t_s": last_s, "message": "y"}],
+    )
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err.startswith("error: chat spans ")
+    assert str(int(last_s)) in captured.err
+    assert "Traceback" not in captured.err
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
+def test_main_sparse_chat_below_the_mean_floor_exits_one_without_judging(
+    tmp_path, capsys, fake_judge
+):
+    chat = write_json(
+        tmp_path,
+        "chat.json",
+        [{"t_s": 0, "message": "x"}, {"t_s": 3000, "message": "y"}],
+    )
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err == "error: chat sin actividad suficiente\n"
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
 def test_main_chat_without_activity_exits_one(tmp_path, capsys, fake_judge):
     chat = write_json(tmp_path, "chat.json", [])
 
@@ -629,18 +883,16 @@ def test_main_unwritable_output_exits_one(tmp_path, capsys, fake_judge):
 def test_main_all_candidates_failing_exits_one_and_leaves_no_output(
     tmp_path, capsys, monkeypatch
 ):
-    monkeypatch.setattr(
-        main_module, "GeminiJudge", lambda: UsageJudge(failing_outcomes())
-    )
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: failing_judge(UsageJudge))
 
     code = main(cli_args(tmp_path))
 
     captured = capsys.readouterr()
     assert code == EXIT_FATAL == 1
-    assert captured.err == "error: all 3 candidates failed; output not written\n"
+    assert captured.err == "error: all 20 candidates failed; output not written\n"
     assert "Moments:" not in captured.out
     assert PENDING_REVIEW not in captured.out
-    assert "Candidate errors: 3" in captured.out
+    assert "Candidate errors: 20" in captured.out
     assert not (tmp_path / "resultados.json").exists()
 
 
@@ -649,9 +901,7 @@ def test_main_all_candidates_failing_keeps_an_existing_output(
 ):
     out_path = tmp_path / "resultados.json"
     out_path.write_text("previous content\n", encoding="utf-8")
-    monkeypatch.setattr(
-        main_module, "GeminiJudge", lambda: UsageJudge(failing_outcomes())
-    )
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: failing_judge(UsageJudge))
 
     code = main(cli_args(tmp_path))
 
@@ -662,9 +912,7 @@ def test_main_all_candidates_failing_keeps_an_existing_output(
 def test_main_all_candidates_failing_with_reference_prints_no_evaluation(
     tmp_path, capsys, monkeypatch
 ):
-    monkeypatch.setattr(
-        main_module, "GeminiJudge", lambda: UsageJudge(failing_outcomes())
-    )
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: failing_judge(UsageJudge))
 
     code = main(cli_args(tmp_path, **{"--reference": REFERENCE}))
 
@@ -685,7 +933,7 @@ def test_main_candidates_without_transcript_exit_one(tmp_path, capsys, fake_judg
 
     captured = capsys.readouterr()
     assert code == EXIT_FATAL
-    assert captured.err == "error: all 3 candidates failed; output not written\n"
+    assert captured.err == "error: all 20 candidates failed; output not written\n"
     assert fake_judge.calls == 0
     assert not (tmp_path / "resultados.json").exists()
 
@@ -702,13 +950,30 @@ def test_main_partial_failure_exits_zero_and_writes_the_moments(
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert captured.err == ""
-    assert len(read_output(tmp_path / "resultados.json")) == 2
+    assert len(read_output(tmp_path / "resultados.json")) == 5
     assert "Candidate errors: 1" in captured.out
     assert "  - candidate 00:09:00-00:11:15: rate limited" in captured.out
     assert captured.out.splitlines()[-1] == PENDING_REVIEW
 
 
 def test_main_zero_candidates_exits_zero_and_writes_an_empty_list(
+    tmp_path, capsys, monkeypatch
+):
+    judge = UsageJudge({})
+    monkeypatch.setattr(main_module, "GeminiJudge", lambda: judge)
+    monkeypatch.setattr(main_module, "generate_candidates", lambda *a, **k: [])
+
+    code = main(cli_args(tmp_path))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_OK
+    assert captured.err == ""
+    assert (tmp_path / "resultados.json").read_text(encoding="utf-8") == "[]\n"
+    assert "Moments: 0 written to" in captured.out
+    assert judge.calls == 0
+
+
+def test_main_flat_chat_exits_zero_with_judged_candidates(
     tmp_path, capsys, monkeypatch
 ):
     chat = write_json(
@@ -724,9 +989,8 @@ def test_main_zero_candidates_exits_zero_and_writes_an_empty_list(
     captured = capsys.readouterr()
     assert code == EXIT_OK
     assert captured.err == ""
-    assert (tmp_path / "resultados.json").read_text(encoding="utf-8") == "[]\n"
-    assert "Moments: 0 written to" in captured.out
-    assert judge.calls == 0
+    assert "Moments: 5 written to" in captured.out
+    assert judge.calls == 5
 
 
 def test_main_corrupt_csv_exits_one_naming_the_file(tmp_path, capsys, fake_judge):
@@ -918,7 +1182,7 @@ def test_preflight_of_a_valid_new_output_leaves_no_file_until_the_run_ends(
 
     run(TRANSCRIPT, CHAT, out_path, judge, None, io.StringIO())
 
-    assert seen == [False, False, False]
+    assert seen == [False] * 20
     assert out_path.is_file()
 
 
@@ -1021,8 +1285,10 @@ def test_gemini_judge_with_a_fake_client_prints_numeric_usage(
     tmp_path, capsys, monkeypatch
 ):
     texts = [
-        make_judgment(*window, "gancho", 10, 10, 10).model_dump_json()
-        for window in ((600, 650), (2010, 2050), (4200, 4240))
+        make_judgment(
+            start_s + 10, start_s + 50, "gancho", 10, 10, 10
+        ).model_dump_json()
+        for start_s in DEMO_STARTS
     ]
     usage = types.GenerateContentResponseUsageMetadata(
         prompt_token_count=1000, candidates_token_count=60, thoughts_token_count=40
@@ -1035,9 +1301,13 @@ def test_gemini_judge_with_a_fake_client_prints_numeric_usage(
     lines = capsys.readouterr().out.splitlines()
     assert code == EXIT_OK
     assert isinstance(judge, ReportsUsage)
-    assert "Judge usage: 3 calls, 3000 input tokens, 300 output tokens" in lines
+    assert "Judge usage: 20 calls, 20000 input tokens, 2000 output tokens" in lines
     usage_line = next(line for line in lines if line.startswith("Judge usage:"))
-    assert [int(number) for number in re.findall(r"\d+", usage_line)] == [3, 3000, 300]
+    assert [int(number) for number in re.findall(r"\d+", usage_line)] == [
+        20,
+        20000,
+        2000,
+    ]
 
 
 @pytest.mark.parametrize("missing", ["--transcript", "--chat", "--out"])

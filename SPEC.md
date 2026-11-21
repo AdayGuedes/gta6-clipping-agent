@@ -1,6 +1,6 @@
 # SPEC v0 — gta6-clipping-agent
 
-Versión: v0 · Fecha: 2026-11-17 · Revisada con D5 y D12 (ver docs/DECISIONS.md)
+Versión: v0 · Fecha: 2026-11-17 · Revisada con D5, D12 y D15 (ver docs/DECISIONS.md)
 
 ## 1. Contexto
 
@@ -110,12 +110,22 @@ Cualquier otro valor no valida.
 
 La mide el código contando mensajes del chat. El LLM nunca la estima.
 
-- Ventanas de 60 segundos.
-- Línea base = mediana de mensajes/minuto de todo el VOD.
-  - Si la mediana es 0, la línea base pasa a ser la media.
-  - Si la media también es 0, el sistema falla con el error explícito "chat
-    sin actividad suficiente". No se inventan puntuaciones.
+- El chat se cuenta por segundo. La reacción se mide con una ventana deslizante
+  de 60 segundos que avanza de 1 en 1 segundo (D15). Cada ventana se expresa en
+  mensajes por minuto.
+- Línea base = mediana de mensajes/minuto de todas las ventanas deslizantes
+  completas del VOD (D15).
+  - Si la mediana es 0, la línea base pasa a ser la media de esas ventanas,
+    pero solo si esa media es de al menos 1 mensaje/minuto (D17).
+  - Si la mediana es 0 y la media queda por debajo de 1 mensaje/minuto (o es
+    0), el sistema falla con el error explícito "chat sin actividad
+    suficiente". No se inventan puntuaciones: sin ese suelo, dos mensajes
+    sueltos darían un multiplicador de ×1471 y 30 puntos.
+- El chat dura como máximo 48 h (172 800 s). Un `t_s` mayor se rechaza con un
+  error explícito que nombra el valor y el límite, antes de reservar memoria.
 - Multiplicador de una ventana = mensajes/minuto de la ventana / línea base.
+  Los mensajes/minuto del candidato (`chat.msg_min`) se redondean a entero con
+  half-up; el multiplicador no se redondea.
 - Puntos según el multiplicador, con interpolación lineal dentro de cada
   tramo:
 
@@ -144,16 +154,33 @@ ventana candidata = [inicio del pico − 60 s, fin del pico + 15 s]
 ```
 
 Los 15 s se cuentan después del fin de la ventana de 60 s del pico, no después
-de su inicio.
+de su inicio. El inicio se recorta a 0 al principio del VOD. El final no se
+recorta al final del VOD, porque el detector no conoce su duración (D11).
 
-**Selección de candidatos.** Si dos ventanas candidatas se solapan o quedan a
-menos de 120 s, se fusionan en una, con la unión de tiempos y los puntos del
-pico mayor. La fusión tiene un tope de 300 s por ventana (D11): si la unión lo
-supera, el candidato actual se cierra y la ventana siguiente abre uno nuevo,
-con su propio pico mayor. Como una ventana sola mide 135 s, en la práctica solo
-se fusionan picos a 2 minutos o menos, y un grupo largo de picos seguidos puede
-partirse en candidatos solapados. Después se quedan como máximo los 20 mejores,
-cada uno con sus puntos de `reaccion_chat` ya calculados.
+**Selección de candidatos (D15).** Se toman hasta 20 inicios de ventana
+(top-K), ordenados por número de mensajes, con supresión de no-máximos: un
+inicio se descarta si queda a menos de 120 s de otro ya elegido (a exactamente
+120 s se permite). A igualdad de mensajes gana el inicio menor. Si varias
+ventanas seguidas tienen la misma suma, el inicio del pico es la primera de
+esa meseta: es el primero que se elige, y una meseta más larga que la separación
+puede dar otros inicios a 120 s o más de él. Las ventanas sin ningún mensaje no
+se emiten.
+
+No hay umbral mínimo de multiplicador ni relleno: un VOD con poca reacción da
+candidatos con pocos puntos, y la rúbrica del juez (sección 7.2) decide si el
+momento vale. Con un chat con actividad siempre hay candidatos, hasta 20. Un
+chat más corto que la ventana se mide con una única ventana que cubre todo el
+chat. Los únicos fallos son el chat sin actividad suficiente y el chat de más
+de 48 h, descritos arriba.
+
+Dos candidatos vecinos pueden solaparse hasta 15 s, porque sus ventanas de 135 s
+distan 120 s entre inicios. No se fusionan. La desduplicación de momentos que
+hace el juez tras puntuar (`_deduplicate` en `src/judge.py`, de la fase 3; ver
+la [nota de la fase 3](docs/sessions/2026-11-19-fase-3.md)) es la red final
+contra duplicados.
+
+Los candidatos salen ordenados por puntos de `reaccion_chat` de mayor a menor y,
+a igualdad, por inicio ascendente.
 
 ### 7.2 Criterios que juzga el LLM juez
 
@@ -193,7 +220,39 @@ python -m src.main --transcript <fichero> --chat <fichero> --out resultados.json
 ```
 
 `--reference` es opcional: si se pasa, el CLI evalúa los momentos propuestos
-contra los clips de referencia de la sección 10.
+contra los clips de referencia de la sección 10. Una referencia sin ningún clip
+es un error de carga («reference has no clips»): el CLI sale con 1 antes de
+llamar al juez.
+
+### 9.1 Arnés de evaluación sin juez (fase 5)
+
+```bash
+python -m src.harness --chat <fichero> --reference <fichero> [--window-s 60] [--k 20] [--trials 2000] [--seed 0]
+```
+
+`--trials` debe ser al menos 20: con menos, el p-valor mínimo posible,
+1/(trials+1), no baja de 0,05 y el PASS sería imposible.
+
+Mide los candidatos del detector, no los momentos del juez, y no usa juez ni
+red. Para K = 5, 10, 20 y 40 informa de cuántos clips de referencia solapa algún
+candidato, con la tolerancia de la sección 10 (±60 s, extremos incluidos). Si
+`--k` no está en esa lista, se informa también de su fila. Lo compara con la
+media de un azar de `--trials` pruebas con la semilla `--seed` y da un
+p-valor por permutación. El azar sortea los inicios de ventana con la misma
+separación mínima que el detector (120 s), así que compara con la misma
+selección que se mide. El veredicto (D15) es PASS si aciertos@K para `--k` (20
+por defecto) supera al azar con p<0,05 y el detector da candidatos; si no, FAIL.
+Un FAIL sale también con código 0: el veredicto va en la salida, no en el código
+de salida.
+
+Códigos de salida: 0 si corre, 1 si un fichero no existe o no es válido (una
+referencia sin ningún clip también es un error de carga: «reference has no
+clips»), si el chat no tiene actividad suficiente o si dura más de 48 h, 2 si
+los argumentos o la configuración son inválidos, 130 si se interrumpe.
+
+**Dos medidas distintas.** El `--reference` del CLI evalúa los momentos que salen
+del juez, como mucho 5. El arnés evalúa los candidatos, hasta 20. Aciertos@20 del
+arnés y la evaluación del CLI no son la misma cifra.
 
 ## 10. Criterios de aceptación del v0
 

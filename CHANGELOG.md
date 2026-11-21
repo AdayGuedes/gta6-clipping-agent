@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Record decision D16 for judge pacing and retries against provider limits
 - Add a rule banning local-tool prefixes and markers from project artifacts
 - Record decision D17 for the activity floor of the mean baseline fallback
+- Add sliding-window top-K peak detector and judge-free evaluation harness (D15)
 
 ### Changed
 

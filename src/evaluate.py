@@ -23,12 +23,13 @@ class EvaluationReport(BaseModel):
     clips: list[ClipResult]
 
 
+def window_matches(start_s: float, end_s: float, clip: ReferenceClip) -> bool:
+    return start_s <= clip.end_s + TOLERANCE_S and end_s >= clip.start_s - TOLERANCE_S
+
+
 def _matches(moment: Moment, clip: ReferenceClip) -> bool:
-    moment_start = hhmmss_to_seconds(moment.inicio)
-    moment_end = hhmmss_to_seconds(moment.fin)
-    return (
-        moment_start <= clip.end_s + TOLERANCE_S
-        and moment_end >= clip.start_s - TOLERANCE_S
+    return window_matches(
+        hhmmss_to_seconds(moment.inicio), hhmmss_to_seconds(moment.fin), clip
     )
 
 

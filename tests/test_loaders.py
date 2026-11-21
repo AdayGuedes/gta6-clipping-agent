@@ -250,8 +250,17 @@ def test_reference_extra_keys_are_ignored(tmp_path):
     assert load_reference(path) == [ReferenceClip(start_s=610, end_s=640)]
 
 
-def test_reference_empty_list_returns_empty_list(tmp_path):
-    assert load_reference(write(tmp_path, "r.json", [])) == []
+def test_reference_empty_list_raises_a_load_error_naming_the_file(tmp_path):
+    with pytest.raises(LoadError, match="^r.json: reference has no clips$"):
+        load_reference(write(tmp_path, "r.json", []))
+
+
+def test_reference_empty_csv_raises_a_load_error(tmp_path):
+    path = tmp_path / "r.csv"
+    path.write_text("start_s,end_s\n", encoding="utf-8")
+
+    with pytest.raises(LoadError, match="reference has no clips"):
+        load_reference(path)
 
 
 def test_reference_missing_key_says_what_was_expected(tmp_path):
