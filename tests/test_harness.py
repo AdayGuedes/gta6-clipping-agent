@@ -1,7 +1,9 @@
 import io
+import itertools
 import json
 import random
 import re
+import statistics
 
 import pytest
 
@@ -19,9 +21,16 @@ from src.harness import (
     passes,
     random_hits,
     run,
+    spaced_random_starts,
 )
 from src.models import ChatEvent, ReferenceClip
-from src.peaks import DetectorConfig
+from src.peaks import (
+    DetectorConfig,
+    count_messages_per_second,
+    is_separated,
+    separation_gap,
+    window_sums,
+)
 
 POSITIONS = 5937
 PEAK_CONFIG = DetectorConfig(top_k=3)
@@ -101,9 +110,6 @@ def table_rows(lines):
     return [match.groups() for line in lines if (match := pattern.match(line))]
 
 
-# count_hits
-
-
 def test_count_hits_counts_each_clip_once():
     windows = [(0, 100), (50, 150)]
 
@@ -132,9 +138,6 @@ def test_count_hits_uses_the_sixty_second_tolerance_with_inclusive_edges():
 def test_count_hits_without_windows_or_reference_is_zero():
     assert count_hits([], clips([(10, 20)])) == 0
     assert count_hits([(0, 100)], []) == 0
-
-
-# random_hits
 
 
 def test_random_hits_is_deterministic_for_a_seed():
@@ -171,7 +174,7 @@ def test_random_hits_with_the_same_seed_repeats_the_whole_sequence():
 
 
 def test_random_hits_draws_starts_without_replacement(monkeypatch):
-    config = DetectorConfig(window_s=1, lead_s=0, tail_s=0)
+    config = DetectorConfig(window_s=1, lead_s=0, tail_s=0, min_separation_s=1)
     reference = clips([(0, 1), (1, 2), (2, 3)])
     monkeypatch.setattr(
         harness_module,
@@ -187,7 +190,7 @@ def test_random_hits_draws_starts_without_replacement(monkeypatch):
 def test_random_hits_with_more_windows_than_positions_uses_every_position(
     monkeypatch,
 ):
-    config = DetectorConfig(window_s=1, lead_s=0, tail_s=0)
+    config = DetectorConfig(window_s=1, lead_s=0, tail_s=0, min_separation_s=1)
     reference = clips([(0, 1), (1, 2), (2, 3)])
     monkeypatch.setattr(
         harness_module,
@@ -217,7 +220,180 @@ def test_random_hits_far_from_the_clip_is_zero():
     assert random_hits(10, 10, config, reference, random.Random(0)) == 0
 
 
-# KResult / passes
+class CountingRandom(random.Random):
+    def __init__(self, seed):
+        super().__init__(seed)
+        self.choices = 0
+
+    def choice(self, seq):
+        self.choices += 1
+        return super().choice(seq)
+
+
+def all_separated(starts, min_separation_s):
+    return all(
+        abs(a - b) >= max(min_separation_s, 1)
+        for a, b in itertools.combinations(starts, 2)
+    )
+
+
+def test_spaced_random_starts_are_always_at_least_the_separation_apart():
+    for seed in range(300):
+        starts = spaced_random_starts(8, 1500, 120, random.Random(seed))
+
+        assert len(starts) == 8
+        assert all_separated(starts, 120)
+        assert all(0 <= start < 1500 for start in starts)
+
+
+def test_spaced_random_starts_are_deterministic_for_a_seed():
+    first = spaced_random_starts(8, 1500, 120, random.Random(5))
+    second = spaced_random_starts(8, 1500, 120, random.Random(5))
+    other = spaced_random_starts(8, 1500, 120, random.Random(6))
+
+    assert first == second
+    assert first != other
+
+
+def test_spaced_random_starts_terminate_and_place_what_fits_when_there_is_no_room():
+    sizes = set()
+    for seed in range(200):
+        starts = spaced_random_starts(10, 300, 120, random.Random(seed))
+        sizes.add(len(starts))
+        assert all_separated(starts, 120)
+
+    assert sizes == {2, 3}
+
+
+def test_spaced_random_starts_place_a_single_window_when_one_position_exists():
+    assert spaced_random_starts(5, 1, 120, random.Random(0)) == [0]
+
+
+def test_spaced_random_starts_without_separation_never_repeat_a_position():
+    for seed in range(50):
+        starts = spaced_random_starts(4, 6, 0, random.Random(seed))
+        assert len(set(starts)) == 4
+
+    assert sorted(spaced_random_starts(10, 5, 0, random.Random(1))) == [0, 1, 2, 3, 4]
+
+
+def test_spaced_random_starts_without_windows_is_empty():
+    assert spaced_random_starts(0, 100, 120, random.Random(0)) == []
+
+
+def test_spaced_random_starts_reach_the_fallback_when_positions_run_out():
+    reached = 0
+    for seed in range(100):
+        rng = CountingRandom(seed)
+        starts = spaced_random_starts(10, 300, 120, rng)
+        reached += rng.choices > 0
+        assert all_separated(starts, 120)
+
+    assert reached > 0
+
+
+def test_spaced_random_starts_do_not_use_the_fallback_when_rejection_suffices():
+    rng = CountingRandom(0)
+
+    spaced_random_starts(3, 5000, 120, rng)
+
+    assert rng.choices == 0
+
+
+def test_spaced_random_starts_fallback_alone_respects_the_separation(monkeypatch):
+    monkeypatch.setattr(harness_module, "MAX_REJECTIONS", 0)
+    sizes = set()
+    for seed in range(200):
+        rng = CountingRandom(seed)
+        starts = spaced_random_starts(10, 300, 120, rng)
+        sizes.add(len(starts))
+        assert rng.choices == len(starts)
+        assert all_separated(starts, 120)
+
+    assert sizes == {2, 3}
+
+
+def test_spaced_random_starts_fallback_keeps_the_starts_chosen_by_rejection(
+    monkeypatch,
+):
+    monkeypatch.setattr(harness_module, "MAX_REJECTIONS", 1)
+    resumed = 0
+    for seed in range(300):
+        rng = CountingRandom(seed)
+        starts = spaced_random_starts(3, 60, 20, rng)
+        resumed += rng.choices > 0 and rng.choices < len(starts)
+        assert all_separated(starts, 20)
+        assert len(set(starts)) == len(starts)
+
+    assert resumed > 0
+
+
+def test_random_hits_passes_the_config_separation_to_the_spaced_draw(monkeypatch):
+    calls = []
+
+    def fake(n_windows, positions, min_separation_s, rng):
+        calls.append((n_windows, positions, min_separation_s, rng))
+        return [0]
+
+    monkeypatch.setattr(harness_module, "spaced_random_starts", fake)
+    rng = random.Random(0)
+
+    random_hits(4, 900, DetectorConfig(min_separation_s=77), clips([(0, 30)]), rng)
+
+    assert calls == [(4, 900, 77, rng)]
+
+
+def test_random_hits_windows_are_never_closer_than_the_config_separation(
+    monkeypatch,
+):
+    seen = []
+    real = harness_module.candidate_window
+
+    def spy(start, config):
+        seen.append(start)
+        return real(start, config)
+
+    monkeypatch.setattr(harness_module, "candidate_window", spy)
+    config = DetectorConfig(min_separation_s=120)
+
+    for seed in range(100):
+        seen.clear()
+        random_hits(6, 1000, config, clips([(500, 520)]), random.Random(seed))
+        assert len(seen) == 6
+        assert all_separated(seen, 120)
+
+
+@pytest.mark.parametrize(
+    "min_separation_s, expected", [(0, 1), (1, 1), (2, 2), (119, 119), (120, 120)]
+)
+def test_separation_gap_is_the_minimum_separation_but_at_least_one(
+    min_separation_s, expected
+):
+    assert separation_gap(min_separation_s) == expected
+
+
+def test_is_separated_accepts_exactly_the_minimum_separation():
+    assert is_separated(120, [0], 120) is True
+    assert is_separated(119, [0], 120) is False
+    assert is_separated(0, [120], 120) is True
+    assert is_separated(1, [120], 120) is False
+
+
+def test_is_separated_checks_every_chosen_position():
+    assert is_separated(500, [0, 200, 400], 120) is False
+    assert is_separated(520, [0, 200, 400], 120) is True
+    assert is_separated(300, [0, 200, 400], 120) is False
+
+
+def test_is_separated_with_nothing_chosen_is_true():
+    assert is_separated(7, [], 120) is True
+
+
+def test_is_separated_never_accepts_a_position_already_chosen():
+    assert is_separated(5, [5], 1) is False
+    assert is_separated(6, [5], 1) is True
+    assert is_separated(5, [5], 0) is False
+    assert is_separated(6, [5], 0) is True
 
 
 def make_result(**overrides):
@@ -248,9 +424,6 @@ def test_k_result_is_immutable():
 
     with pytest.raises(AttributeError):
         result.hits = 9
-
-
-# evaluate_k
 
 
 def evaluate_planted(pairs):
@@ -328,7 +501,68 @@ def test_count_hits_follows_a_changed_matching_criterion(monkeypatch):
     assert count_hits([(5000, 5100)], reference) == 2
 
 
-# run
+def noisy_chat_events(seed, duration_s=4000):
+    rng = random.Random(seed)
+    return [
+        ChatEvent(t_s=float(second), message="x")
+        for second in range(duration_s)
+        for _ in range(rng.choice((0, 0, 1, 1, 2)))
+    ]
+
+
+def independent_reference(seed, duration_s=4000, count=20):
+    rng = random.Random(seed)
+    starts = [rng.randrange(duration_s) for _ in range(count)]
+    return [clip(start, start + 30) for start in starts]
+
+
+def test_evaluate_k_random_baseline_is_calibrated_on_a_chat_without_signal():
+    config = DetectorConfig(top_k=20)
+    differences = []
+    p_values = []
+    for seed in range(40):
+        events = noisy_chat_events(seed)
+        positions = len(window_sums(count_messages_per_second(events), config.window_s))
+        result = evaluate_k(
+            events, independent_reference(1000 + seed), config, positions, 100, 7
+        )
+        differences.append(result.hits - result.random_mean)
+        p_values.append(result.p_value)
+
+    assert abs(statistics.fmean(differences)) < 1.5
+    assert sum(p < 0.05 for p in p_values) <= 6
+
+
+def test_evaluate_k_draws_as_many_random_windows_as_there_are_candidates(
+    monkeypatch,
+):
+    drawn = []
+    real = harness_module.random_hits
+
+    def spy(n_windows, positions, config, reference, rng):
+        drawn.append(n_windows)
+        return real(n_windows, positions, config, reference, rng)
+
+    monkeypatch.setattr(harness_module, "random_hits", spy)
+    events = [ChatEvent(t_s=100.0, message="x")] * 20
+
+    result = evaluate_k(events, clips(NEAR_PEAKS), DetectorConfig(top_k=5), 500, 12, 1)
+
+    assert result.candidates == 1
+    assert drawn == [1] * 12
+
+
+def test_evaluate_k_random_mean_is_the_arithmetic_mean_of_the_trials(monkeypatch):
+    outcomes = iter([0, 0, 0, 4])
+    monkeypatch.setattr(harness_module, "random_hits", lambda *args: next(outcomes))
+
+    result = evaluate_k(
+        planted_chat_events(), clips(NEAR_PEAKS), PEAK_CONFIG, POSITIONS, 4, SEED
+    )
+
+    assert result.random_mean == 1.0
+    assert result.hits == 3
+    assert result.p_value == pytest.approx(2 / 5)
 
 
 def run_to_lines(tmp_path, pairs, config=PEAK_CONFIG, trials=TRIALS, seed=SEED):
@@ -465,9 +699,6 @@ def test_run_reports_the_window_size_of_the_config(tmp_path):
 
     assert lines[0] == "Chat: 1308 messages, 5967 window positions"
     assert lines[2].startswith("Config: window 30 s, baseline global")
-
-
-# main
 
 
 def test_main_exits_zero_on_pass(tmp_path, capsys):

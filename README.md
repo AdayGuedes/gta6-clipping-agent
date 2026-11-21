@@ -107,12 +107,14 @@ python -m src.harness --chat examples/demo/chat.json --reference examples/demo/r
 ```
 
 Informa de aciertos@K para K = 5, 10, 20 y 40 sobre los candidatos del detector
-(no sobre los momentos del juez), frente a un azar con p-valor por permutación,
-y da un veredicto PASS/FAIL según el criterio de D15. Opciones: `--window-s`
-(60), `--k` (20), `--trials` (2000) y `--seed` (0). Sale con `0` también con
-FAIL, `1` si un fichero no es válido o el chat no tiene actividad, `2` si los
-argumentos son inválidos y `130` si se interrumpe. Detalle en la sección 9.1 de
-la [SPEC](SPEC.md).
+(no sobre los momentos del juez), y también de `--k` si no está en esa lista.
+Compara con un azar con p-valor por permutación, que sortea los inicios con la
+misma separación mínima que el detector (120 s), y da un veredicto PASS/FAIL
+según el criterio de D15. Opciones: `--window-s` (60), `--k` (20), `--trials`
+(2000) y `--seed` (0). Sale con `0` también con FAIL, `1` si un fichero no existe
+o no es válido, o si el chat no tiene actividad suficiente, `2` si los argumentos
+son inválidos y `130` si se interrumpe. Detalle en la sección 9.1 de la
+[SPEC](SPEC.md).
 
 ## Documentos
 

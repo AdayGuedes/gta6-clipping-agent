@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import random
 import statistics
 import sys
@@ -16,6 +17,8 @@ from src.peaks import (
     candidate_window,
     count_messages_per_second,
     generate_candidates,
+    is_separated,
+    separation_gap,
     window_sums,
 )
 
@@ -25,6 +28,7 @@ EXIT_INTERRUPTED = 130
 
 REPORTED_K = (5, 10, 20, 40)
 SIGNIFICANCE = 0.05
+MAX_REJECTIONS = 64
 
 Window = tuple[float, float]
 
@@ -52,8 +56,38 @@ def random_hits(
     reference: Sequence[ReferenceClip],
     rng: random.Random,
 ) -> int:
-    starts = rng.sample(range(positions), min(n_windows, positions))
+    starts = spaced_random_starts(n_windows, positions, config.min_separation_s, rng)
     return count_hits([candidate_window(p, config) for p in starts], reference)
+
+
+def spaced_random_starts(
+    n_windows: int, positions: int, min_separation_s: int, rng: random.Random
+) -> list[int]:
+    # Rejected positions stay invalid as `chosen` only grows, so drawing with
+    # replacement and rejecting picks uniformly among the still-valid positions:
+    # the same law as select_peaks' greedy pass over iid random scores.
+    chosen: list[int] = []
+    misses = 0
+    while len(chosen) < n_windows and misses < MAX_REJECTIONS:
+        position = rng.randrange(positions)
+        if is_separated(position, chosen, min_separation_s):
+            chosen.append(position)
+            misses = 0
+        else:
+            misses += 1
+    if len(chosen) == n_windows:
+        return chosen
+    gap = separation_gap(min_separation_s)
+    is_free = bytearray(b"\x01") * positions
+    for kept in chosen:
+        low, high = max(0, kept - gap + 1), min(positions, kept + gap)
+        is_free[low:high] = bytes(high - low)
+    free = list(itertools.compress(range(positions), is_free))
+    while free and len(chosen) < n_windows:
+        pick = rng.choice(free)
+        chosen.append(pick)
+        free = [p for p in free if abs(p - pick) >= gap]
+    return chosen
 
 
 def evaluate_k(

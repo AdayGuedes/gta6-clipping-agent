@@ -157,7 +157,9 @@ recorta al final del VOD, porque el detector no conoce su duración (D11).
 inicio se descarta si queda a menos de 120 s de otro ya elegido (a exactamente
 120 s se permite). A igualdad de mensajes gana el inicio menor. Si varias
 ventanas seguidas tienen la misma suma, el inicio del pico es la primera de
-esa meseta. Las ventanas sin ningún mensaje no se emiten.
+esa meseta: es el primero que se elige, y una meseta más larga que la separación
+puede dar otros inicios a 120 s o más de él. Las ventanas sin ningún mensaje no
+se emiten.
 
 No hay umbral mínimo de multiplicador ni relleno: un VOD con poca reacción da
 candidatos con pocos puntos, y la rúbrica del juez (sección 7.2) decide si el
@@ -167,8 +169,9 @@ chat. El único fallo es el chat sin actividad suficiente, descrito arriba.
 
 Dos candidatos vecinos pueden solaparse hasta 15 s, porque sus ventanas de 135 s
 distan 120 s entre inicios. No se fusionan. La desduplicación de momentos que
-hace el juez tras puntuar (`_deduplicate` en `src/judge.py`, D14) es la red
-final contra duplicados.
+hace el juez tras puntuar (`_deduplicate` en `src/judge.py`, de la fase 3; ver
+la [nota de la fase 3](docs/sessions/2026-11-19-fase-3.md)) es la red final
+contra duplicados.
 
 Los candidatos salen ordenados por puntos de `reaccion_chat` de mayor a menor y,
 a igualdad, por inicio ascendente.
@@ -221,16 +224,19 @@ python -m src.harness --chat <fichero> --reference <fichero> [--window-s 60] [--
 
 Mide los candidatos del detector, no los momentos del juez, y no usa juez ni
 red. Para K = 5, 10, 20 y 40 informa de cuántos clips de referencia solapa algún
-candidato, con la tolerancia de la sección 10 (±60 s, extremos incluidos). Lo
-compara con la media de un azar de `--trials` pruebas con la semilla `--seed` y
-da un p-valor por permutación. El veredicto (D15) es PASS si aciertos@K para
-`--k` (20 por defecto) supera al azar con p<0,05 y el detector da candidatos; si
-no, FAIL. Un FAIL sale también con código 0: el veredicto va en la salida, no en
-el código de salida.
+candidato, con la tolerancia de la sección 10 (±60 s, extremos incluidos). Si
+`--k` no está en esa lista, se informa también de su fila. Lo compara con la
+media de un azar de `--trials` pruebas con la semilla `--seed` y da un
+p-valor por permutación. El azar sortea los inicios de ventana con la misma
+separación mínima que el detector (120 s), así que compara con la misma
+selección que se mide. El veredicto (D15) es PASS si aciertos@K para `--k` (20
+por defecto) supera al azar con p<0,05 y el detector da candidatos; si no, FAIL.
+Un FAIL sale también con código 0: el veredicto va en la salida, no en el código
+de salida.
 
-Códigos de salida: 0 si corre, 1 si un fichero no es válido o el chat no tiene
-actividad suficiente, 2 si los argumentos o la configuración son inválidos, 130
-si se interrumpe.
+Códigos de salida: 0 si corre, 1 si un fichero no existe o no es válido, o el
+chat no tiene actividad suficiente, 2 si los argumentos o la configuración son
+inválidos, 130 si se interrumpe.
 
 **Dos medidas distintas.** El `--reference` del CLI evalúa los momentos que salen
 del juez, como mucho 5. El arnés evalúa los candidatos, hasta 20. Aciertos@20 del

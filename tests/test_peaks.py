@@ -47,9 +47,6 @@ def sums_with(length, values):
     return sums
 
 
-# constants
-
-
 def test_module_constants_match_the_decision():
     assert WINDOW_S == 60
     assert LEAD_S == 60
@@ -61,9 +58,6 @@ def test_module_constants_match_the_decision():
 
 def test_insufficient_chat_error_is_a_value_error():
     assert issubclass(InsufficientChatError, ValueError)
-
-
-# DetectorConfig
 
 
 def test_detector_config_defaults():
@@ -146,9 +140,6 @@ def test_detector_config_rejects_unknown_baselines(baseline):
         DetectorConfig(baseline=baseline)
 
 
-# count_messages_per_second
-
-
 def test_count_floors_timestamps_into_one_second_buckets():
     events = [event(0), event(0.9), event(1), event(59.999)]
 
@@ -179,9 +170,6 @@ def test_count_accepts_any_iterable():
     assert count_messages_per_second(event(t) for t in (0, 1, 1)) == [1, 2]
 
 
-# window_sums
-
-
 def test_window_sums_slide_one_second_at_a_time():
     assert window_sums([1, 2, 3, 4, 5], 2) == [3, 5, 7, 9]
     assert window_sums([1, 2, 3, 4, 5], 3) == [6, 9, 12]
@@ -208,9 +196,6 @@ def test_window_sums_without_counts_is_empty():
     assert window_sums([], 60) == []
 
 
-# to_msg_min
-
-
 @pytest.mark.parametrize(
     ("window_sum", "window_s", "expected"),
     [
@@ -224,9 +209,6 @@ def test_window_sums_without_counts_is_empty():
 )
 def test_to_msg_min_scales_the_window_sum_to_one_minute(window_sum, window_s, expected):
     assert to_msg_min(window_sum, window_s) == pytest.approx(expected)
-
-
-# compute_baseline
 
 
 @pytest.mark.parametrize(
@@ -251,9 +233,6 @@ def test_baseline_falls_back_to_the_mean_when_the_median_is_zero():
 def test_baseline_without_activity_raises(rates):
     with pytest.raises(InsufficientChatError, match="^chat sin actividad suficiente$"):
         compute_baseline(rates)
-
-
-# reaction_points
 
 
 @pytest.mark.parametrize(
@@ -290,9 +269,6 @@ def test_reaction_points_reject_invalid_multipliers(multiplier):
         reaction_points(multiplier)
 
 
-# candidate_window
-
-
 def test_candidate_window_extends_from_lead_before_to_window_plus_tail_after():
     assert candidate_window(100, DetectorConfig()) == (40, 175)
 
@@ -317,9 +293,6 @@ def test_candidate_window_without_lead_or_tail_is_the_window_itself():
     config = DetectorConfig(lead_s=0, tail_s=0)
 
     assert candidate_window(100, config) == (100, 160)
-
-
-# select_peaks
 
 
 def test_select_peaks_returns_the_highest_sums_first():
@@ -401,9 +374,6 @@ def test_select_peaks_with_no_real_separation_keeps_every_active_position(
     ]
 
 
-# generate_candidates: never silent
-
-
 def test_a_single_message_still_gives_one_candidate():
     [candidate] = generate_candidates([event(0)])
 
@@ -469,9 +439,6 @@ def test_events_may_come_from_a_generator():
     assert summary(generate_candidates(events)) == summary(
         generate_candidates(uniform_chat(600))
     )
-
-
-# generate_candidates: a clear peak
 
 
 def test_clear_peak_is_the_first_candidate_with_its_exact_numbers():
@@ -557,9 +524,6 @@ def test_sparse_chat_uses_the_mean_baseline_and_ignores_zero_sum_windows():
     assert all(c.reaction_points == pytest.approx(30.0) for c in candidates)
 
 
-# generate_candidates: selection and order
-
-
 def test_output_is_ordered_by_points_descending():
     events = uniform_chat(1500) + burst(300, 18) + burst(700, 48) + burst(1100, 36)
 
@@ -578,6 +542,16 @@ def test_equal_points_are_ordered_by_ascending_start():
 
     assert [c.start_s for c in candidates] == [181.0, 981.0]
     assert [c.msg_min for c in candidates] == [48, 48]
+
+
+def test_equal_points_with_different_sums_are_ordered_by_ascending_start():
+    events = uniform_chat(1500) + burst(300, 100) + burst(900, 200)
+
+    candidates = generate_candidates(events, max_candidates=2)
+
+    assert [c.reaction_points for c in candidates] == [30.0, 30.0]
+    assert [c.msg_min for c in candidates] == [112, 212]
+    assert [c.start_s for c in candidates] == [181.0, 781.0]
 
 
 def test_equal_bursts_119_seconds_apart_emit_the_later_one_from_its_plateau():
@@ -657,9 +631,6 @@ def test_custom_min_separation_changes_how_many_peaks_fit():
     assert len(far) == 3
 
 
-# generate_candidates: window size, rounding
-
-
 def test_custom_window_scales_msg_min_and_the_candidate_window():
     events = uniform_chat(600) + burst(300, 24)
     config = DetectorConfig(window_s=30)
@@ -708,9 +679,6 @@ def test_multiplier_uses_the_unrounded_msg_min():
     assert first.multiplier == pytest.approx(22.5 / 12)
     assert first.multiplier != pytest.approx(23 / 12)
     assert first.reaction_points == pytest.approx(11 + (22.5 / 12 - 1.5) * 9)
-
-
-# generate_candidates: no merging
 
 
 @pytest.mark.parametrize(("gap_s", "overlap_s"), [(120, 15), (125, 10), (134, 1)])

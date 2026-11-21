@@ -273,11 +273,12 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - Sin espera entre llamadas: la ejecución real dirá cuántos 429 aparecen en
     el tier gratuito y entonces se toma una decisión nueva.
 - **Estado:** con el detector de D15 (fase 5), la demo da 20 candidatos de 135 s
-  y los tres clips de su referencia caen dentro de ellos (3/3). Sustituye al 2/3
-  de esta decisión, que medía con el detector anterior. La evaluación del CLI
-  mide los momentos del juez (hasta 5). «Cero candidatos» solo ocurre si se
-  sustituye el generador: con un chat con actividad, el detector siempre propone
-  hasta 20.
+  y los tres clips de su referencia caen dentro de ellos (3/3). Son medidas
+  distintas: ese 3/3 mide los candidatos del detector, y la evaluación del CLI
+  mide los momentos del juez (hasta 5) y depende del juez (con un juez falso que
+  solo promueve los picos plantados sale 2/3). «Cero candidatos» solo ocurre si
+  se sustituye el generador: con un chat con actividad, el detector siempre
+  propone hasta 20.
 
 ## D15 · 2026-11-20 · Revisión del detector de picos para la fase 5
 

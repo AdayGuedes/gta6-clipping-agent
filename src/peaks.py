@@ -104,13 +104,22 @@ def candidate_window(peak_start_s: int, config: DetectorConfig) -> tuple[int, in
     return start_s, end_s
 
 
+def separation_gap(min_separation_s: int) -> int:
+    return max(min_separation_s, 1)
+
+
+def is_separated(position: int, chosen: list[int], min_separation_s: int) -> bool:
+    gap = separation_gap(min_separation_s)
+    return all(abs(position - kept) >= gap for kept in chosen)
+
+
 def select_peaks(sums: list[int], top_k: int, min_separation_s: int) -> list[int]:
     order = sorted(range(len(sums)), key=lambda p: (-sums[p], p))
     chosen: list[int] = []
     for position in order:
         if len(chosen) == top_k or sums[position] == 0:
             break
-        if all(abs(position - kept) >= min_separation_s for kept in chosen):
+        if is_separated(position, chosen, min_separation_s):
             chosen.append(position)
     return chosen
 
