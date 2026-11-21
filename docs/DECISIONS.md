@@ -343,6 +343,39 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - Va en su rama `fase-5/...` y su PR (D6), con Opus, cuando D15 esté en
     `main`.
 
+## D16 · 2026-11-20 · Resiliencia del juez ante límites del proveedor (fase 6)
+
+- **Decisión:**
+  1. **Pacing dentro de `GeminiJudge`.** Mínimo 12 s entre llamadas (el techo
+     del tier gratuito es de 5 por minuto), aplicado a TODAS las llamadas,
+     reintentos incluidos.
+  2. **Errores transitorios.** Los transitorios (429, 503 y de red) se
+     distinguen de los de validación. Ante un 429 se espera el `retryDelay` que
+     devuelva el servidor; ante un 503, retroceso de 15 s, 30 s y 60 s. Máximo 3
+     intentos por candidato en errores transitorios.
+  3. **Errores de validación.** Mantienen el reintento único actual de la SPEC
+     §8. La SPEC §8 se actualiza con esta política.
+  4. **Tests.** El sueño se inyecta (`sleeper`) para que los tests no esperen
+     de verdad. Ningún test llama a la API real.
+  5. **Corrida de cierre.** Al fusionar la fase 6 se repite la corrida sobre el
+     fixture de Rubius. Esa corrida es la validación del juez (contrato,
+     comportamiento con pacing y acierto) y produce la primera cifra de
+     evaluación a nivel de Moments del CLI.
+- **Por qué:** la corrida de cierre de la fase 5 (nota de sesión
+  `docs/sessions/2026-11-20-fase-5.md`) hizo 38 llamadas y ninguna dio una
+  respuesta útil: 12 × 429 por el límite de 5 peticiones por minuto, 7 × 503 y
+  0 tokens. El reintento único es inmediato y gasta cuota sin esperar. D14 dejó
+  esta decisión para cuando la ejecución real mostrara los 429.
+- **Implica:**
+  - Sustituye al «sin ritmo de llamadas» de D14. Con 20 candidatos, el pacing
+    de 12 s da unos 4 minutos por VOD como mínimo, más lo que añadan los
+    reintentos.
+  - La interfaz `Judge` (D12) y el detector no cambian; el cambio vive en
+    `GeminiJudge` y en la SPEC §8.
+  - D16 no cambia el tratamiento de un candidato sin transcripción en su
+    ventana (D14).
+  - Va en su rama `fase-6/...` y su PR (D6).
+
 ## Propuestas
 
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
