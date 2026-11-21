@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Update PROGRESS to open v1 with the detector decided in D15 and phase 5 next
 - Record decision D16 for judge pacing and retries against provider limits
 - Add a rule banning local-tool prefixes and markers from project artifacts
+- Record decision D17 for the activity floor of the mean baseline fallback
 
 ### Changed
 

@@ -376,6 +376,25 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
     ventana (D14).
   - Va en su rama `fase-6/...` y su PR (D6).
 
+## D17 · 2026-11-20 · Suelo de actividad para el respaldo a la media (matiza D5)
+
+- **Decisión:** el respaldo a la media de la línea base (D5, SPEC §7.1) solo
+  opera sobre un suelo. Si la mediana de mensajes/minuto de las ventanas es 0 y
+  la media queda por debajo de 1 mensaje/minuto, el chat se rechaza con
+  `InsufficientChatError` («chat sin actividad suficiente»). Con la mediana
+  mayor que 0 no cambia nada; con la mediana 0 y la media de 1 mensaje/minuto
+  o más, la línea base sigue siendo la media.
+- **Por qué:** la revisión de la PR 7 mostró que, en un chat muy disperso, el
+  respaldo a la media produce una reacción inventada: dos mensajes sueltos (en
+  0 s y 3000 s) daban un multiplicador de ×1471 y 30 puntos de reacción, y 15
+  mensajes al azar en una hora daban ×8,5 y 30 puntos. D5 ya decía que no se
+  inventan puntuaciones.
+- **Implica:**
+  - Se actualiza la SPEC §7.1 y el detector lleva tests del suelo (justo por
+    debajo y justo en 1 mensaje/minuto).
+  - El error es el mismo que ya existía, así que el CLI y el arnés lo tratan
+    igual (salida 1).
+
 ## Propuestas
 
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
