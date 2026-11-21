@@ -8,7 +8,7 @@ from src.models import Candidate, ChatEvent
 WINDOW_S = 60
 LEAD_S = 60
 TAIL_S = 15
-MERGE_GAP_S = 120
+MIN_PEAK_SEPARATION_S = 120
 MAX_CANDIDATES = 20
 MAX_CHAT_SPAN_S = 48 * 3600
 MIN_MEAN_MSG_MIN = 1.0
@@ -38,7 +38,7 @@ def _require_int(name: str, value: object, minimum: int) -> None:
 class DetectorConfig:
     window_s: int = WINDOW_S
     top_k: int = MAX_CANDIDATES
-    min_separation_s: int = MERGE_GAP_S
+    min_separation_s: int = MIN_PEAK_SEPARATION_S
     lead_s: int = LEAD_S
     tail_s: int = TAIL_S
 

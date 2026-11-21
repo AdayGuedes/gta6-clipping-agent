@@ -8,8 +8,8 @@ from src.peaks import (
     LEAD_S,
     MAX_CANDIDATES,
     MAX_CHAT_SPAN_S,
-    MERGE_GAP_S,
     MIN_MEAN_MSG_MIN,
+    MIN_PEAK_SEPARATION_S,
     TAIL_S,
     WINDOW_S,
     ChatSpanError,
@@ -53,7 +53,7 @@ def test_module_constants_match_the_decision():
     assert WINDOW_S == 60
     assert LEAD_S == 60
     assert TAIL_S == 15
-    assert MERGE_GAP_S == 120
+    assert MIN_PEAK_SEPARATION_S == 120
     assert MAX_CANDIDATES == 20
     assert MAX_CHAT_SPAN_S == 48 * 3600
     assert MIN_MEAN_MSG_MIN == 1.0

@@ -287,9 +287,9 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
      la reacción con una ventana deslizante de W=60 s (paso de 1 s), una sola
      escala: sin multi-escala. `msg_min` sigue siendo mensajes por minuto.
   2. **Selección.** Top-K con K=20 por puntos de reacción, con supresión de
-     no-máximos (separación mínima de 120 s entre picos, la de `MERGE_GAP_S`).
-     Sustituye al umbral ×1,5 de D10 y al «sin relleno» de D11.5; el tope de
-     20 de D10 se mantiene. El detector nunca calla: con un chat con
+     no-máximos (separación mínima de 120 s entre picos, la de
+     `MIN_PEAK_SEPARATION_S`). Sustituye al umbral ×1,5 de D10 y al «sin
+     relleno» de D11.5; el tope de 20 de D10 se mantiene. El detector nunca calla: con un chat con
      actividad devuelve siempre candidatos hasta K, aunque la reacción sea
      débil. El único caso sin candidatos es el error explícito «chat sin
      actividad suficiente» de la SPEC 7.1.

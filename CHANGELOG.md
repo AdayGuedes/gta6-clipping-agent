@@ -26,3 +26,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Resolve SPEC open questions and record decision D5
+- Rename MERGE_GAP_S to MIN_PEAK_SEPARATION_S, with no change in behaviour
