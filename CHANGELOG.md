@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Record an open proposal to review the chat-peak detector after the real-VOD run
 - Record decision D15 for the phase 5 detector revision and narrow the open proposal
 - Update PROGRESS to open v1 with the detector decided in D15 and phase 5 next
+- Record decision D16 for judge pacing and retries against provider limits
+- Add a rule banning local-tool prefixes and markers from project artifacts
+- Record decision D17 for the activity floor of the mean baseline fallback
 - Add sliding-window top-K peak detector and judge-free evaluation harness (D15)
 
 ### Changed

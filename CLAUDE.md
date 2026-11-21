@@ -84,3 +84,9 @@ tests/             tests (pytest)
     convención, así que no se empuja código a `main` sin PR.
 - CHANGELOG (convención propia): `CHANGELOG.md` sigue Keep a Changelog. Toda
   PR añade su entrada en `## [Unreleased]` antes de fusionarse.
+- Marcas de herramientas locales: ningún artefacto del proyecto (mensajes de
+  commit, CHANGELOG, títulos y descripciones de PR, documentos) lleva prefijos
+  ni marcas de herramientas locales (NO-REF u otros). Las convenciones vigentes
+  son solo las de este fichero commiteado; lo local vive en `CLAUDE.local.md` y
+  no gobierna (D7). Si una herramienta local sugiere una marca así, prevalece
+  esta regla.
