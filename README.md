@@ -58,8 +58,11 @@ con Ctrl+C. La ruta de `--out` se comprueba antes de llamar al juez. Un
 candidato que falla dos veces en el juez no es fatal mientras algún otro
 produzca un momento: se cuenta en `Candidate errors` y el resto sigue adelante.
 Con un chat con actividad, el detector siempre propone candidatos (hasta 20), así
-que `[]` solo aparece si el generador se sustituye. Un chat sin actividad sale
-con `1` y el error `chat sin actividad suficiente`.
+que `[]` solo aparece si el generador se sustituye. Un chat sin actividad (o con
+tan poca que su media queda por debajo de 1 mensaje/minuto, D17) sale con `1` y
+el error `chat sin actividad suficiente`; un chat de más de 48 h, con `1` y un
+error que nombra el valor; y una referencia sin clips, con `1` y
+`reference has no clips`, antes de llamar al juez.
 
 El sistema no sube ni publica nada: el resultado es un JSON para que lo
 revises y subas a mano.
@@ -111,9 +114,10 @@ Informa de aciertos@K para K = 5, 10, 20 y 40 sobre los candidatos del detector
 Compara con un azar con p-valor por permutación, que sortea los inicios con la
 misma separación mínima que el detector (120 s), y da un veredicto PASS/FAIL
 según el criterio de D15. Opciones: `--window-s` (60), `--k` (20), `--trials`
-(2000) y `--seed` (0). Sale con `0` también con FAIL, `1` si un fichero no existe
-o no es válido, o si el chat no tiene actividad suficiente, `2` si los argumentos
-son inválidos y `130` si se interrumpe. Detalle en la sección 9.1 de la
+(2000, mínimo 20) y `--seed` (0). Sale con `0` también con FAIL, `1` si un
+fichero no existe o no es válido (una referencia sin clips incluida), si el chat
+no tiene actividad suficiente o si dura más de 48 h, `2` si los argumentos son
+inválidos y `130` si se interrumpe. Detalle en la sección 9.1 de la
 [SPEC](SPEC.md).
 
 ## Documentos

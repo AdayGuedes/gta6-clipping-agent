@@ -30,7 +30,7 @@ fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
 - [ ] Fase 5 detector revisado (D15)
       - [x] Ventana deslizante de 60 s, selección top-K con supresión de
         no-máximos, `DetectorConfig`, arnés de evaluación sin juez y tests
-        (579 en verde). El arnés da PASS sobre el fixture de Rubius: 5/10 en
+        (605 en verde). El arnés da PASS sobre el fixture de Rubius: 5/10 en
         K=20 frente a 1,84 del azar, p=0,0325
         ([nota](docs/sessions/2026-11-20-fase-5.md))
       - [ ] Primera corrida del juez real sobre el fixture (2026-11-20): 0 de

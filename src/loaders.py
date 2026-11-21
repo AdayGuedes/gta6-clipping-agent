@@ -29,7 +29,10 @@ def load_chat(path: str | Path) -> list[ChatEvent]:
 
 
 def load_reference(path: str | Path) -> list[ReferenceClip]:
-    return _load(path, REFERENCE_KEYS, REFERENCE_KEYS, ReferenceClip)
+    clips = _load(path, REFERENCE_KEYS, REFERENCE_KEYS, ReferenceClip)
+    if not clips:
+        raise LoadError(f"{Path(path).name}: reference has no clips")
+    return clips
 
 
 def _load(

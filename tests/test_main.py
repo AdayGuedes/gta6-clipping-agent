@@ -796,6 +796,57 @@ def test_main_bad_reference_exits_one_without_judging(tmp_path, capsys, fake_jud
     assert not (tmp_path / "resultados.json").exists()
 
 
+def test_main_empty_reference_exits_one_without_judging(tmp_path, capsys, fake_judge):
+    reference = write_json(tmp_path, "empty_reference.json", [])
+
+    code = main(cli_args(tmp_path, **{"--reference": reference}))
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.err == "error: empty_reference.json: reference has no clips\n"
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
+@pytest.mark.parametrize("last_s", [172801, 1e9, 1e15])
+def test_main_chat_longer_than_48_hours_exits_one_without_judging(
+    tmp_path, capsys, fake_judge, last_s
+):
+    chat = write_json(
+        tmp_path,
+        "chat.json",
+        [{"t_s": 5, "message": "x"}, {"t_s": last_s, "message": "y"}],
+    )
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err.startswith("error: chat spans ")
+    assert str(int(last_s)) in captured.err
+    assert "Traceback" not in captured.err
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
+def test_main_sparse_chat_below_the_mean_floor_exits_one_without_judging(
+    tmp_path, capsys, fake_judge
+):
+    chat = write_json(
+        tmp_path,
+        "chat.json",
+        [{"t_s": 0, "message": "x"}, {"t_s": 3000, "message": "y"}],
+    )
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err == "error: chat sin actividad suficiente\n"
+    assert fake_judge.calls == 0
+    assert not (tmp_path / "resultados.json").exists()
+
+
 def test_main_chat_without_activity_exits_one(tmp_path, capsys, fake_judge):
     chat = write_json(tmp_path, "chat.json", [])
 

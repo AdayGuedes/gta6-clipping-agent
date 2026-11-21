@@ -10,7 +10,8 @@ LEAD_S = 60
 TAIL_S = 15
 MERGE_GAP_S = 120
 MAX_CANDIDATES = 20
-BASELINES = ("global",)
+MAX_CHAT_SPAN_S = 48 * 3600
+MIN_MEAN_MSG_MIN = 1.0
 
 _REACTION_TIERS = (
     (1.0, 1.5, 0.0, 10.0),
@@ -24,6 +25,10 @@ class InsufficientChatError(ValueError):
     pass
 
 
+class ChatSpanError(ValueError):
+    pass
+
+
 def _require_int(name: str, value: object, minimum: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
@@ -32,7 +37,6 @@ def _require_int(name: str, value: object, minimum: int) -> None:
 @dataclass(frozen=True)
 class DetectorConfig:
     window_s: int = WINDOW_S
-    baseline: str = "global"
     top_k: int = MAX_CANDIDATES
     min_separation_s: int = MERGE_GAP_S
     lead_s: int = LEAD_S
@@ -41,20 +45,22 @@ class DetectorConfig:
     def __post_init__(self) -> None:
         _require_int("window_s", self.window_s, 1)
         _require_int("top_k", self.top_k, 1)
-        _require_int("min_separation_s", self.min_separation_s, 0)
+        _require_int("min_separation_s", self.min_separation_s, 1)
         _require_int("lead_s", self.lead_s, 0)
         _require_int("tail_s", self.tail_s, 0)
-        if self.baseline not in BASELINES:
-            raise ValueError(
-                f"baseline must be one of {BASELINES}, got {self.baseline!r}"
-            )
 
 
 def count_messages_per_second(events: Iterable[ChatEvent]) -> list[int]:
     seconds = [int(event.t_s) for event in events]
     if not seconds:
         return []
-    counts = [0] * (max(seconds) + 1)
+    last = max(seconds)
+    if last > MAX_CHAT_SPAN_S:
+        raise ChatSpanError(
+            f"chat spans {last} s, above the limit of {MAX_CHAT_SPAN_S} s (48 h); "
+            "t_s must be seconds from the start of the VOD"
+        )
+    counts = [0] * (last + 1)
     for second in seconds:
         counts[second] += 1
     return counts
@@ -81,7 +87,7 @@ def compute_baseline(rates: list[float]) -> float:
         if median > 0:
             return float(median)
         mean = statistics.fmean(rates)
-        if mean > 0:
+        if mean >= MIN_MEAN_MSG_MIN:
             return mean
     raise InsufficientChatError("chat sin actividad suficiente")
 
@@ -104,13 +110,8 @@ def candidate_window(peak_start_s: int, config: DetectorConfig) -> tuple[int, in
     return start_s, end_s
 
 
-def separation_gap(min_separation_s: int) -> int:
-    return max(min_separation_s, 1)
-
-
 def is_separated(position: int, chosen: list[int], min_separation_s: int) -> bool:
-    gap = separation_gap(min_separation_s)
-    return all(abs(position - kept) >= gap for kept in chosen)
+    return all(abs(position - kept) >= min_separation_s for kept in chosen)
 
 
 def select_peaks(sums: list[int], top_k: int, min_separation_s: int) -> list[int]:
@@ -129,8 +130,8 @@ def generate_candidates(
     max_candidates: int | None = None,
     config: DetectorConfig | None = None,
 ) -> list[Candidate]:
-    if max_candidates is not None and max_candidates < 1:
-        raise ValueError(f"max_candidates must be at least 1, got {max_candidates}")
+    if max_candidates is not None:
+        _require_int("max_candidates", max_candidates, 1)
     if config is None:
         config = DetectorConfig()
     top_k = (

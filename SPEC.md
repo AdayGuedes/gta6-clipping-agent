@@ -115,9 +115,14 @@ La mide el código contando mensajes del chat. El LLM nunca la estima.
   mensajes por minuto.
 - Línea base = mediana de mensajes/minuto de todas las ventanas deslizantes
   completas del VOD (D15).
-  - Si la mediana es 0, la línea base pasa a ser la media de esas ventanas.
-  - Si la media también es 0, el sistema falla con el error explícito "chat
-    sin actividad suficiente". No se inventan puntuaciones.
+  - Si la mediana es 0, la línea base pasa a ser la media de esas ventanas,
+    pero solo si esa media es de al menos 1 mensaje/minuto (D17).
+  - Si la mediana es 0 y la media queda por debajo de 1 mensaje/minuto (o es
+    0), el sistema falla con el error explícito "chat sin actividad
+    suficiente". No se inventan puntuaciones: sin ese suelo, dos mensajes
+    sueltos darían un multiplicador de ×1471 y 30 puntos.
+- El chat dura como máximo 48 h (172 800 s). Un `t_s` mayor se rechaza con un
+  error explícito que nombra el valor y el límite, antes de reservar memoria.
 - Multiplicador de una ventana = mensajes/minuto de la ventana / línea base.
   Los mensajes/minuto del candidato (`chat.msg_min`) se redondean a entero con
   half-up; el multiplicador no se redondea.
@@ -165,7 +170,8 @@ No hay umbral mínimo de multiplicador ni relleno: un VOD con poca reacción da
 candidatos con pocos puntos, y la rúbrica del juez (sección 7.2) decide si el
 momento vale. Con un chat con actividad siempre hay candidatos, hasta 20. Un
 chat más corto que la ventana se mide con una única ventana que cubre todo el
-chat. El único fallo es el chat sin actividad suficiente, descrito arriba.
+chat. Los únicos fallos son el chat sin actividad suficiente y el chat de más
+de 48 h, descritos arriba.
 
 Dos candidatos vecinos pueden solaparse hasta 15 s, porque sus ventanas de 135 s
 distan 120 s entre inicios. No se fusionan. La desduplicación de momentos que
@@ -214,13 +220,18 @@ python -m src.main --transcript <fichero> --chat <fichero> --out resultados.json
 ```
 
 `--reference` es opcional: si se pasa, el CLI evalúa los momentos propuestos
-contra los clips de referencia de la sección 10.
+contra los clips de referencia de la sección 10. Una referencia sin ningún clip
+es un error de carga («reference has no clips»): el CLI sale con 1 antes de
+llamar al juez.
 
 ### 9.1 Arnés de evaluación sin juez (fase 5)
 
 ```bash
 python -m src.harness --chat <fichero> --reference <fichero> [--window-s 60] [--k 20] [--trials 2000] [--seed 0]
 ```
+
+`--trials` debe ser al menos 20: con menos, el p-valor mínimo posible,
+1/(trials+1), no baja de 0,05 y el PASS sería imposible.
 
 Mide los candidatos del detector, no los momentos del juez, y no usa juez ni
 red. Para K = 5, 10, 20 y 40 informa de cuántos clips de referencia solapa algún
@@ -234,9 +245,10 @@ por defecto) supera al azar con p<0,05 y el detector da candidatos; si no, FAIL.
 Un FAIL sale también con código 0: el veredicto va en la salida, no en el código
 de salida.
 
-Códigos de salida: 0 si corre, 1 si un fichero no existe o no es válido, o el
-chat no tiene actividad suficiente, 2 si los argumentos o la configuración son
-inválidos, 130 si se interrumpe.
+Códigos de salida: 0 si corre, 1 si un fichero no existe o no es válido (una
+referencia sin ningún clip también es un error de carga: «reference has no
+clips»), si el chat no tiene actividad suficiente o si dura más de 48 h, 2 si
+los argumentos o la configuración son inválidos, 130 si se interrumpe.
 
 **Dos medidas distintas.** El `--reference` del CLI evalúa los momentos que salen
 del juez, como mucho 5. El arnés evalúa los candidatos, hasta 20. Aciertos@20 del

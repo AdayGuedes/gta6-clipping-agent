@@ -10,7 +10,7 @@ from src.evaluate import evaluate, format_report
 from src.judge import GeminiJudge, Judge, JudgeConfigError, judge_candidates
 from src.loaders import LoadError, load_chat, load_reference, load_transcript
 from src.models import Moment
-from src.peaks import InsufficientChatError, generate_candidates
+from src.peaks import ChatSpanError, InsufficientChatError, generate_candidates
 
 EXIT_OK = 0
 EXIT_FATAL = 1
@@ -141,6 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run(args.transcript, args.chat, args.out, judge, args.reference)
     except (
         AllCandidatesFailedError,
+        ChatSpanError,
         JudgeConfigError,
         LoadError,
         InsufficientChatError,

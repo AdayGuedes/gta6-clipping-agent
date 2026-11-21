@@ -5,12 +5,14 @@ import pytest
 
 from src.models import ChatEvent
 from src.peaks import (
-    BASELINES,
     LEAD_S,
     MAX_CANDIDATES,
+    MAX_CHAT_SPAN_S,
     MERGE_GAP_S,
+    MIN_MEAN_MSG_MIN,
     TAIL_S,
     WINDOW_S,
+    ChatSpanError,
     DetectorConfig,
     InsufficientChatError,
     candidate_window,
@@ -53,18 +55,22 @@ def test_module_constants_match_the_decision():
     assert TAIL_S == 15
     assert MERGE_GAP_S == 120
     assert MAX_CANDIDATES == 20
-    assert BASELINES == ("global",)
+    assert MAX_CHAT_SPAN_S == 48 * 3600
+    assert MIN_MEAN_MSG_MIN == 1.0
 
 
 def test_insufficient_chat_error_is_a_value_error():
     assert issubclass(InsufficientChatError, ValueError)
 
 
+def test_chat_span_error_is_a_value_error():
+    assert issubclass(ChatSpanError, ValueError)
+
+
 def test_detector_config_defaults():
     config = DetectorConfig()
 
     assert config.window_s == 60
-    assert config.baseline == "global"
     assert config.top_k == 20
     assert config.min_separation_s == 120
     assert config.lead_s == 60
@@ -80,10 +86,10 @@ def test_detector_config_is_frozen():
 
 def test_detector_config_accepts_custom_values():
     config = DetectorConfig(
-        window_s=30, top_k=3, min_separation_s=0, lead_s=0, tail_s=0
+        window_s=30, top_k=3, min_separation_s=1, lead_s=0, tail_s=0
     )
 
-    assert (config.window_s, config.top_k, config.min_separation_s) == (30, 3, 0)
+    assert (config.window_s, config.top_k, config.min_separation_s) == (30, 3, 1)
     assert (config.lead_s, config.tail_s) == (0, 0)
 
 
@@ -94,6 +100,7 @@ def test_detector_config_accepts_custom_values():
         {"window_s": -60},
         {"top_k": 0},
         {"top_k": -1},
+        {"min_separation_s": 0},
         {"min_separation_s": -1},
         {"lead_s": -1},
         {"tail_s": -1},
@@ -134,10 +141,10 @@ def test_detector_config_rejects_non_integers(overrides):
         DetectorConfig(**overrides)
 
 
-@pytest.mark.parametrize("baseline", ["local", "rolling", "", "Global"])
-def test_detector_config_rejects_unknown_baselines(baseline):
-    with pytest.raises(ValueError, match="baseline"):
-        DetectorConfig(baseline=baseline)
+def test_detector_config_has_no_baseline_field():
+    assert "baseline" not in {f.name for f in dataclasses.fields(DetectorConfig)}
+    with pytest.raises(TypeError):
+        DetectorConfig(baseline="global")
 
 
 def test_count_floors_timestamps_into_one_second_buckets():
@@ -168,6 +175,26 @@ def test_count_without_events_is_empty():
 
 def test_count_accepts_any_iterable():
     assert count_messages_per_second(event(t) for t in (0, 1, 1)) == [1, 2]
+
+
+def test_count_accepts_a_chat_that_ends_exactly_at_the_span_limit():
+    counts = count_messages_per_second([event(MAX_CHAT_SPAN_S)])
+
+    assert len(counts) == MAX_CHAT_SPAN_S + 1
+
+
+@pytest.mark.parametrize("last_s", [MAX_CHAT_SPAN_S + 1, 1e9, 1e15])
+def test_count_rejects_a_chat_longer_than_the_span_limit_naming_the_value(last_s):
+    with pytest.raises(ChatSpanError) as raised:
+        count_messages_per_second([event(5), event(last_s)])
+
+    assert str(int(last_s)) in str(raised.value)
+    assert str(MAX_CHAT_SPAN_S) in str(raised.value)
+
+
+def test_a_chat_longer_than_the_span_limit_fails_before_detecting_anything():
+    with pytest.raises(ChatSpanError):
+        generate_candidates([event(0), event(1e15)])
 
 
 def test_window_sums_slide_one_second_at_a_time():
@@ -233,6 +260,22 @@ def test_baseline_falls_back_to_the_mean_when_the_median_is_zero():
 def test_baseline_without_activity_raises(rates):
     with pytest.raises(InsufficientChatError, match="^chat sin actividad suficiente$"):
         compute_baseline(rates)
+
+
+def test_mean_fallback_is_used_at_exactly_the_activity_floor():
+    assert compute_baseline([0.0] * 9 + [10.0]) == pytest.approx(MIN_MEAN_MSG_MIN)
+
+
+@pytest.mark.parametrize(
+    "rates", [[0.0] * 9 + [9.0], [0.0] * 99 + [50.0], [0.0, 0.0, 1.0]]
+)
+def test_mean_below_the_activity_floor_is_rejected(rates):
+    with pytest.raises(InsufficientChatError, match="^chat sin actividad suficiente$"):
+        compute_baseline(rates)
+
+
+def test_a_positive_median_below_the_floor_is_still_used():
+    assert compute_baseline([0.5, 0.5, 0.5]) == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(
@@ -510,18 +553,35 @@ def test_baseline_is_the_median_so_a_burst_does_not_raise_it():
     assert first.multiplier == pytest.approx(60 / 12)
 
 
-def test_sparse_chat_uses_the_mean_baseline_and_ignores_zero_sum_windows():
-    events = [event(0), *burst(300, 1), event(500)]
+def test_chat_of_two_lone_messages_is_rejected_instead_of_inventing_reaction():
+    with pytest.raises(InsufficientChatError, match="^chat sin actividad suficiente$"):
+        generate_candidates([event(0), event(3000)])
 
-    candidates = generate_candidates(events)
 
-    assert summary(candidates) == [
-        (0.0, 75.0, 1),
-        (181.0, 316.0, 1),
-        (381.0, 516.0, 1),
-    ]
-    assert all(c.multiplier == pytest.approx(442 / 62) for c in candidates)
-    assert all(c.reaction_points == pytest.approx(30.0) for c in candidates)
+def test_fifteen_scattered_messages_in_an_hour_are_rejected():
+    events = [event(float(t)) for t in range(100, 3600, 240)]
+
+    assert len(events) == 15
+    with pytest.raises(InsufficientChatError, match="^chat sin actividad suficiente$"):
+        generate_candidates(events)
+
+
+def sparse_chat(burst_size):
+    return [*burst(300, burst_size), event(658)]
+
+
+def test_sparse_chat_below_the_mean_floor_is_rejected():
+    with pytest.raises(InsufficientChatError):
+        generate_candidates(sparse_chat(9))
+
+
+def test_sparse_chat_above_the_mean_floor_uses_the_mean_baseline():
+    candidates = generate_candidates(sparse_chat(10))
+
+    baseline = 601 / 600
+    assert candidates[0].msg_min == 10
+    assert candidates[0].multiplier == pytest.approx(10 / baseline)
+    assert candidates[0].reaction_points == pytest.approx(30.0)
 
 
 def test_output_is_ordered_by_points_descending():
@@ -587,8 +647,8 @@ def test_max_candidates_limits_the_result():
     assert len(generate_candidates(events, max_candidates=3)) == 3
 
 
-@pytest.mark.parametrize("max_candidates", [0, -1])
-def test_max_candidates_must_be_at_least_one(max_candidates):
+@pytest.mark.parametrize("max_candidates", [0, -1, 2.5, True, "3", 3.0])
+def test_max_candidates_must_be_a_positive_integer(max_candidates):
     with pytest.raises(ValueError, match="max_candidates"):
         generate_candidates(uniform_chat(600), max_candidates=max_candidates)
 

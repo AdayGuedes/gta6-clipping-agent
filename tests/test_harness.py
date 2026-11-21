@@ -14,6 +14,8 @@ from src.harness import (
     EXIT_FATAL,
     EXIT_INTERRUPTED,
     EXIT_OK,
+    MIN_TRIALS,
+    SIGNIFICANCE,
     KResult,
     count_hits,
     evaluate_k,
@@ -28,7 +30,6 @@ from src.peaks import (
     DetectorConfig,
     count_messages_per_second,
     is_separated,
-    separation_gap,
     window_sums,
 )
 
@@ -40,7 +41,8 @@ SEED = 1
 NEAR_PEAKS = [(1000, 1030), (3000, 3030), (5000, 5030)]
 FAR_FROM_PEAKS = [(2000, 2030), (3900, 3930), (5700, 5730)]
 CONFIG_LINE = (
-    "Config: window 60 s, baseline global, min separation 120 s, lead 60 s, tail 15 s"
+    "Config: window 60 s, baseline global (median, mean fallback), "
+    "min separation 120 s, lead 60 s, tail 15 s"
 )
 
 
@@ -269,12 +271,12 @@ def test_spaced_random_starts_place_a_single_window_when_one_position_exists():
     assert spaced_random_starts(5, 1, 120, random.Random(0)) == [0]
 
 
-def test_spaced_random_starts_without_separation_never_repeat_a_position():
+def test_spaced_random_starts_with_the_minimum_separation_never_repeat_a_position():
     for seed in range(50):
-        starts = spaced_random_starts(4, 6, 0, random.Random(seed))
+        starts = spaced_random_starts(4, 6, 1, random.Random(seed))
         assert len(set(starts)) == 4
 
-    assert sorted(spaced_random_starts(10, 5, 0, random.Random(1))) == [0, 1, 2, 3, 4]
+    assert sorted(spaced_random_starts(10, 5, 1, random.Random(1))) == [0, 1, 2, 3, 4]
 
 
 def test_spaced_random_starts_without_windows_is_empty():
@@ -363,15 +365,6 @@ def test_random_hits_windows_are_never_closer_than_the_config_separation(
         assert all_separated(seen, 120)
 
 
-@pytest.mark.parametrize(
-    "min_separation_s, expected", [(0, 1), (1, 1), (2, 2), (119, 119), (120, 120)]
-)
-def test_separation_gap_is_the_minimum_separation_but_at_least_one(
-    min_separation_s, expected
-):
-    assert separation_gap(min_separation_s) == expected
-
-
 def test_is_separated_accepts_exactly_the_minimum_separation():
     assert is_separated(120, [0], 120) is True
     assert is_separated(119, [0], 120) is False
@@ -392,8 +385,6 @@ def test_is_separated_with_nothing_chosen_is_true():
 def test_is_separated_never_accepts_a_position_already_chosen():
     assert is_separated(5, [5], 1) is False
     assert is_separated(6, [5], 1) is True
-    assert is_separated(5, [5], 0) is False
-    assert is_separated(6, [5], 0) is True
 
 
 def make_result(**overrides):
@@ -544,7 +535,7 @@ def test_evaluate_k_draws_as_many_random_windows_as_there_are_candidates(
         return real(n_windows, positions, config, reference, rng)
 
     monkeypatch.setattr(harness_module, "random_hits", spy)
-    events = [ChatEvent(t_s=100.0, message="x")] * 20
+    events = [ChatEvent(t_s=100.0, message="x")] * 120
 
     result = evaluate_k(events, clips(NEAR_PEAKS), DetectorConfig(top_k=5), 500, 12, 1)
 
@@ -698,7 +689,7 @@ def test_run_reports_the_window_size_of_the_config(tmp_path):
     )
 
     assert lines[0] == "Chat: 1308 messages, 5967 window positions"
-    assert lines[2].startswith("Config: window 30 s, baseline global")
+    assert lines[2].startswith("Config: window 30 s, baseline global (median")
 
 
 def test_main_exits_zero_on_pass(tmp_path, capsys):
@@ -791,13 +782,68 @@ def test_main_chat_without_activity_exits_one(tmp_path, capsys):
     assert captured.err == "error: chat sin actividad suficiente\n"
 
 
-@pytest.mark.parametrize("trials", [0, -3])
-def test_main_rejects_non_positive_trials_with_code_two(tmp_path, capsys, trials):
+def test_main_empty_reference_exits_one_with_an_explicit_error(tmp_path, capsys):
+    reference = tmp_path / "empty_reference.json"
+    reference.write_text("[]", encoding="utf-8")
+
+    code = main(cli_args(tmp_path, **{"--reference": reference}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err == "error: empty_reference.json: reference has no clips\n"
+    assert captured.out == ""
+
+
+@pytest.mark.parametrize("last_s", [172801, 1e9, 1e15])
+def test_main_chat_longer_than_48_hours_exits_one_naming_the_value(
+    tmp_path, capsys, last_s
+):
+    chat = tmp_path / "huge_chat.json"
+    chat.write_text(
+        json.dumps([{"t_s": 5, "message": "x"}, {"t_s": last_s, "message": "y"}]),
+        encoding="utf-8",
+    )
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err.startswith("error: chat spans ")
+    assert str(int(last_s)) in captured.err
+    assert "172800" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+def test_main_sparse_chat_below_the_mean_floor_exits_one(tmp_path, capsys):
+    chat = tmp_path / "sparse_chat.json"
+    chat.write_text(
+        json.dumps([{"t_s": 0, "message": "x"}, {"t_s": 3000, "message": "y"}]),
+        encoding="utf-8",
+    )
+
+    code = main(cli_args(tmp_path, **{"--chat": chat}))
+
+    captured = capsys.readouterr()
+    assert code == EXIT_FATAL
+    assert captured.err == "error: chat sin actividad suficiente\n"
+
+
+@pytest.mark.parametrize("trials", [0, -3, 1, 19])
+def test_main_rejects_fewer_than_twenty_trials_with_code_two(tmp_path, capsys, trials):
     with pytest.raises(SystemExit) as exit_info:
         main(cli_args(tmp_path, **{"--trials": trials}))
 
     assert exit_info.value.code == 2
-    assert "--trials must be at least 1" in capsys.readouterr().err
+    assert "--trials must be at least 20" in capsys.readouterr().err
+
+
+def test_min_trials_is_the_smallest_count_that_allows_a_pass():
+    assert 1 / (MIN_TRIALS + 1) < SIGNIFICANCE <= 1 / MIN_TRIALS
+
+
+def test_main_accepts_exactly_twenty_trials(tmp_path):
+    assert main(cli_args(tmp_path, **{"--trials": 20})) == EXIT_OK
 
 
 @pytest.mark.parametrize(

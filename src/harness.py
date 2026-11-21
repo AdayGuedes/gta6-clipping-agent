@@ -12,13 +12,13 @@ from src.evaluate import TOLERANCE_S, window_matches
 from src.loaders import LoadError, load_chat, load_reference
 from src.models import ChatEvent, ReferenceClip
 from src.peaks import (
+    ChatSpanError,
     DetectorConfig,
     InsufficientChatError,
     candidate_window,
     count_messages_per_second,
     generate_candidates,
     is_separated,
-    separation_gap,
     window_sums,
 )
 
@@ -29,6 +29,7 @@ EXIT_INTERRUPTED = 130
 REPORTED_K = (5, 10, 20, 40)
 SIGNIFICANCE = 0.05
 MAX_REJECTIONS = 64
+MIN_TRIALS = 20
 
 Window = tuple[float, float]
 
@@ -77,16 +78,16 @@ def spaced_random_starts(
             misses += 1
     if len(chosen) == n_windows:
         return chosen
-    gap = separation_gap(min_separation_s)
     is_free = bytearray(b"\x01") * positions
     for kept in chosen:
-        low, high = max(0, kept - gap + 1), min(positions, kept + gap)
+        low = max(0, kept - min_separation_s + 1)
+        high = min(positions, kept + min_separation_s)
         is_free[low:high] = bytes(high - low)
     free = list(itertools.compress(range(positions), is_free))
     while free and len(chosen) < n_windows:
         pick = rng.choice(free)
         chosen.append(pick)
-        free = [p for p in free if abs(p - pick) >= gap]
+        free = [p for p in free if abs(p - pick) >= min_separation_s]
     return chosen
 
 
@@ -141,7 +142,8 @@ def run(
     }
 
     config_line = (
-        f"Config: window {config.window_s} s, baseline {config.baseline}, "
+        f"Config: window {config.window_s} s, "
+        "baseline global (median, mean fallback), "
         f"min separation {config.min_separation_s} s, lead {config.lead_s} s, "
         f"tail {config.tail_s} s"
     )
@@ -196,15 +198,24 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.trials < 1:
-        parser.error("--trials must be at least 1")
+    if args.trials < MIN_TRIALS:
+        parser.error(
+            f"--trials must be at least {MIN_TRIALS} (got {args.trials}): with fewer, "
+            f"the smallest p-value 1/(trials+1) cannot go below {SIGNIFICANCE}"
+        )
     try:
         config = DetectorConfig(window_s=args.window_s, top_k=args.k)
     except ValueError as error:
         parser.error(str(error))
     try:
         run(args.chat, args.reference, config, args.trials, args.seed)
-    except (LoadError, InsufficientChatError, OSError, UnicodeDecodeError) as error:
+    except (
+        ChatSpanError,
+        InsufficientChatError,
+        LoadError,
+        OSError,
+        UnicodeDecodeError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_FATAL
     except KeyboardInterrupt:
