@@ -81,8 +81,12 @@ def isolate_environment(monkeypatch):
     def forbidden_client(*args, **kwargs):
         raise AssertionError("tests must never build the real Gemini client")
 
+    def forbidden_sleep(seconds):
+        raise AssertionError("tests must never sleep for real")
+
     monkeypatch.setattr(judge_module, "load_dotenv", lambda *a, **k: None)
     monkeypatch.setattr(judge_module.genai, "Client", forbidden_client)
+    monkeypatch.setattr(judge_module.time, "sleep", forbidden_sleep)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
@@ -1293,7 +1297,9 @@ def test_gemini_judge_with_a_fake_client_prints_numeric_usage(
     usage = types.GenerateContentResponseUsageMetadata(
         prompt_token_count=1000, candidates_token_count=60, thoughts_token_count=40
     )
-    judge = GeminiJudge(client=ScriptedGenaiClient(texts, usage))
+    judge = GeminiJudge(
+        client=ScriptedGenaiClient(texts, usage), sleeper=lambda seconds: None
+    )
     monkeypatch.setattr(main_module, "GeminiJudge", lambda: judge)
 
     code = main(cli_args(tmp_path))

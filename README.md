@@ -64,6 +64,12 @@ el error `chat sin actividad suficiente`; un chat de más de 48 h, con `1` y un
 error que nombra el valor; y una referencia sin clips, con `1` y
 `reference has no clips`, antes de llamar al juez.
 
+Ritmo del juez (D16, SPEC §8): `GeminiJudge` deja al menos 12 s entre llamadas
+a la API, por el techo de 5 peticiones por minuto del tier gratuito, así que 20
+candidatos tardan unos 4 minutos como mínimo. Un 429, un 503 o un fallo de red se
+reintentan esperando (el `retryDelay` del servidor o un retroceso de 15 s y 30 s),
+hasta 3 intentos por candidato.
+
 El sistema no sube ni publica nada: el resultado es un JSON para que lo
 revises y subas a mano.
 

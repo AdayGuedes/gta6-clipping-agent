@@ -204,13 +204,27 @@ a igualdad, por inicio ascendente.
   transcripción (español o inglés).
 - Su salida es estructurada y se valida con pydantic contra el esquema de la
   sección 5.
+- Ritmo de llamadas (D16): `GeminiJudge` deja al menos 12 s entre el inicio de
+  dos llamadas consecutivas a la API (el techo del tier gratuito es de 5 por
+  minuto). Vale para TODAS las llamadas, reintentos incluidos. Con 20
+  candidatos son unos 4 minutos por VOD como mínimo.
+- Errores transitorios (D16): un 429, un 503 o un fallo de red se reintentan
+  dentro del juez, hasta 3 intentos por candidato. Ante un 429 se espera el
+  `retryDelay` que devuelve el servidor (si no lo da, el retroceso); ante un
+  503 o un fallo de red, retroceso de 15 s y 30 s entre intentos (60 s es el
+  tercer escalón del retroceso, que el tope de 3 intentos no llega a usar). La
+  espera nunca baja del ritmo de 12 s. Si los 3 intentos fallan, el candidato
+  se registra como fallo y no se vuelve a llamar por él.
 - Si la salida no valida (o trae tiempos fuera de la ventana, o falla la
-  llamada), se repite la llamada una vez. Si vuelve a fallar, se registra el
+  llamada por un motivo que no es transitorio, como un 400 o un 403), se repite
+  la llamada una vez, con el ritmo de 12 s. Si vuelve a fallar, se registra el
   fallo y se sigue con el resto de candidatos.
 - Puntuación total = `reaccion_chat` (ya calculada por código) + las tres
   puntuaciones del juez. Se ordena de mayor a menor.
-- En cada ejecución registra cuántas llamadas a la API se hicieron y los
-  tokens usados.
+- En cada ejecución registra cuántas llamadas a la API se hicieron (todas, las
+  reintentadas incluidas) y los tokens usados. `GeminiJudge` cuenta además los
+  reintentos transitorios (`retries`) y los errores transitorios por tipo
+  (`transient_errors`: `429`, `503` y `network`).
 - Tests con la API mockeada: ningún test llama a la API real.
 
 ## 9. CLI (fase 4)

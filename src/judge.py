@@ -1,10 +1,14 @@
 import math
 import os
-from collections.abc import Sequence
+import re
+import time
+from collections import Counter
+from collections.abc import Callable, Sequence
 from typing import Protocol, get_args
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -25,9 +29,21 @@ API_KEY_VARIABLE = "GEMINI_API_KEY"
 MODEL_VARIABLE = "GEMINI_MODEL"
 MAX_MOMENTS = 5
 MAX_HOOK_WORDS = 12
+MIN_CALL_INTERVAL_S = 12.0
+MAX_TRANSIENT_ATTEMPTS = 3
+TRANSIENT_BACKOFF_S = (15.0, 30.0, 60.0)
+RATE_LIMIT_CODE = 429
+UNAVAILABLE_CODE = 503
+NETWORK_ERROR = "network"
+
+_RETRY_DELAY = re.compile(r"(\d+(?:\.\d+)?)s")
 
 
 class JudgeError(RuntimeError):
+    pass
+
+
+class TransientJudgeError(JudgeError):
     pass
 
 
@@ -105,9 +121,53 @@ appears inside it.
 """
 
 
+def _transient_kind(error: Exception) -> str | None:
+    if isinstance(error, genai_errors.APIError):
+        if error.code in (RATE_LIMIT_CODE, UNAVAILABLE_CODE):
+            return str(error.code)
+        return None
+    # The SDK may raise httpx or httpx2 errors, which share no base class.
+    if isinstance(error, OSError) or any(
+        cls.__name__ == "TransportError" for cls in type(error).__mro__
+    ):
+        return NETWORK_ERROR
+    return None
+
+
+def _server_retry_delay_s(error: Exception) -> float | None:
+    payload = getattr(error, "details", None)
+    if not isinstance(payload, dict):
+        return None
+    body = payload.get("error")
+    entries = body.get("details") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if not str(entry.get("@type", "")).endswith("RetryInfo"):
+            continue
+        match = _RETRY_DELAY.fullmatch(str(entry.get("retryDelay", "")))
+        if match:
+            return float(match.group(1))
+    return None
+
+
+def _retry_delay_s(error: Exception, kind: str, attempt: int) -> float:
+    if kind == str(RATE_LIMIT_CODE):
+        server_delay_s = _server_retry_delay_s(error)
+        if server_delay_s is not None:
+            return server_delay_s
+    return TRANSIENT_BACKOFF_S[attempt - 1]
+
+
 class GeminiJudge:
     def __init__(
-        self, client: genai.Client | None = None, model: str | None = None
+        self,
+        client: genai.Client | None = None,
+        model: str | None = None,
+        clock: Callable[[], float] | None = None,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         load_dotenv()
         if client is None:
@@ -122,33 +182,72 @@ class GeminiJudge:
         self._model = (
             model or os.environ.get(MODEL_VARIABLE, "").strip() or DEFAULT_GEMINI_MODEL
         )
+        self._clock = time.monotonic if clock is None else clock
+        self._sleep = time.sleep if sleeper is None else sleeper
+        self._last_call_s: float | None = None
+        self._given_up: tuple[Candidate, TransientJudgeError] | None = None
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
+        self.retries = 0
+        self.transient_errors: Counter[str] = Counter()
 
     @property
     def model(self) -> str:
         return self._model
 
     def judge(self, candidate: Candidate, segments: Sequence[Segment]) -> Judgment:
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_json_schema=Judgment.model_json_schema(),
-        )
-        self.calls += 1
-        try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=build_prompt(candidate, segments),
-                config=config,
-            )
-        except Exception as error:
-            raise JudgeError(f"Gemini request failed: {error}") from error
+        if self._given_up is not None and self._given_up[0] == candidate:
+            error = self._given_up[1]
+            self._given_up = None
+            raise error
+        self._given_up = None
 
+        response = self._generate(candidate, build_prompt(candidate, segments))
         self._record_usage(response)
         if not response.text:
             raise JudgeError("Gemini returned an empty response")
         return Judgment.model_validate_json(response.text)
+
+    def _generate(
+        self, candidate: Candidate, prompt: str
+    ) -> types.GenerateContentResponse:
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=Judgment.model_json_schema(),
+        )
+        delay_s = 0.0
+        attempt = 0
+        while True:
+            attempt += 1
+            self._wait_for_turn(delay_s)
+            self._last_call_s = self._clock()
+            self.calls += 1
+            try:
+                return self._client.models.generate_content(
+                    model=self._model, contents=prompt, config=config
+                )
+            except Exception as error:
+                kind = _transient_kind(error)
+                if kind is None:
+                    raise JudgeError(f"Gemini request failed: {error}") from error
+                self.transient_errors[kind] += 1
+                if attempt == MAX_TRANSIENT_ATTEMPTS:
+                    given_up = TransientJudgeError(
+                        f"Gemini request failed after {attempt} attempts: {error}"
+                    )
+                    self._given_up = (candidate, given_up)
+                    raise given_up from error
+                self.retries += 1
+                delay_s = _retry_delay_s(error, kind, attempt)
+
+    def _wait_for_turn(self, delay_s: float) -> None:
+        if self._last_call_s is not None:
+            delay_s = max(
+                delay_s, self._last_call_s + MIN_CALL_INTERVAL_S - self._clock()
+            )
+        if delay_s > 0:
+            self._sleep(delay_s)
 
     def _record_usage(self, response: types.GenerateContentResponse) -> None:
         usage = response.usage_metadata
