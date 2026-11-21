@@ -402,6 +402,33 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - El error es el mismo que ya existía, así que el CLI y el arnés lo tratan
     igual (salida 1).
 
+## D18 · 2026-11-21 · Tope a la espera del `retryDelay` (acota D16)
+
+- **Decisión:**
+  1. **Tope de 300 s.** `MAX_RETRY_DELAY_S = 300`. Si un 429 trae un
+     `retryDelay` de más de 5 minutos, no se espera: el candidato se da por
+     perdido en ese intento y el error registra cuánto pedía el servidor.
+     Hasta 300 s, incluido, se sigue esperando lo que pide (D16).
+  2. **El reintento único es solo para validación.** `judge_candidates` no
+     reintenta un `TransientJudgeError`: el juez ya gastó sus 3 intentos. Un
+     candidato que agota los transitorios cuesta exactamente 3 llamadas, no
+     6. `GeminiJudge` queda sin estado entre candidatos.
+  3. **El retroceso es de 15 s y 30 s.** D16 quiso decir 3 intentos en total,
+     así que hay dos esperas; el escalón de 60 s se quita.
+- **Por qué:** la revisión de la fase 6 mostró dos fallos de diseño. Un 429 de
+  cuota diaria puede pedir horas, y un CLI dormido sin avisar es el fallo
+  silencioso que este proyecto caza. Y la primera versión evitaba las 6
+  llamadas con una memoria de abandono dentro de `GeminiJudge`, que lo
+  acoplaba a cómo reintenta su llamador y lo hacía no idempotente. El «no
+  cambia» de `judge_candidates` en el encargo de la fase era una cota de
+  alcance, no un principio.
+- **Implica:**
+  - D16 queda como historia; D18 lo acota, como D17 acotó a D5.
+  - `judge_candidates` cambia en dos líneas; su firma y la interfaz `Judge`
+    (D12) no cambian. Se actualiza la SPEC §8.
+  - La detección de fallos de red (`OSError` o una clase `TransportError` de
+    httpx/httpx2) se acepta amplia: su coste está acotado a los 3 intentos.
+
 ## Propuestas
 
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el

@@ -31,10 +31,12 @@ MAX_MOMENTS = 5
 MAX_HOOK_WORDS = 12
 MIN_CALL_INTERVAL_S = 12.0
 MAX_TRANSIENT_ATTEMPTS = 3
-TRANSIENT_BACKOFF_S = (15.0, 30.0, 60.0)
-RATE_LIMIT_CODE = 429
-UNAVAILABLE_CODE = 503
+TRANSIENT_BACKOFF_S = (15.0, 30.0)
+MAX_RETRY_DELAY_S = 300.0
+RATE_LIMITED = "429"
+UNAVAILABLE = "503"
 NETWORK_ERROR = "network"
+_TRANSIENT_STATUS = {429: RATE_LIMITED, 503: UNAVAILABLE}
 
 _RETRY_DELAY = re.compile(r"(\d+(?:\.\d+)?)s")
 
@@ -123,9 +125,7 @@ appears inside it.
 
 def _transient_kind(error: Exception) -> str | None:
     if isinstance(error, genai_errors.APIError):
-        if error.code in (RATE_LIMIT_CODE, UNAVAILABLE_CODE):
-            return str(error.code)
-        return None
+        return _TRANSIENT_STATUS.get(error.code)
     # The SDK may raise httpx or httpx2 errors, which share no base class.
     if isinstance(error, OSError) or any(
         cls.__name__ == "TransportError" for cls in type(error).__mro__
@@ -154,7 +154,7 @@ def _server_retry_delay_s(error: Exception) -> float | None:
 
 
 def _retry_delay_s(error: Exception, kind: str, attempt: int) -> float:
-    if kind == str(RATE_LIMIT_CODE):
+    if kind == RATE_LIMITED:
         server_delay_s = _server_retry_delay_s(error)
         if server_delay_s is not None:
             return server_delay_s
@@ -185,7 +185,6 @@ class GeminiJudge:
         self._clock = time.monotonic if clock is None else clock
         self._sleep = time.sleep if sleeper is None else sleeper
         self._last_call_s: float | None = None
-        self._given_up: tuple[Candidate, TransientJudgeError] | None = None
         self.calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
@@ -197,21 +196,13 @@ class GeminiJudge:
         return self._model
 
     def judge(self, candidate: Candidate, segments: Sequence[Segment]) -> Judgment:
-        if self._given_up is not None and self._given_up[0] == candidate:
-            error = self._given_up[1]
-            self._given_up = None
-            raise error
-        self._given_up = None
-
-        response = self._generate(candidate, build_prompt(candidate, segments))
+        response = self._generate(build_prompt(candidate, segments))
         self._record_usage(response)
         if not response.text:
             raise JudgeError("Gemini returned an empty response")
         return Judgment.model_validate_json(response.text)
 
-    def _generate(
-        self, candidate: Candidate, prompt: str
-    ) -> types.GenerateContentResponse:
+    def _generate(self, prompt: str) -> types.GenerateContentResponse:
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_json_schema=Judgment.model_json_schema(),
@@ -233,13 +224,16 @@ class GeminiJudge:
                     raise JudgeError(f"Gemini request failed: {error}") from error
                 self.transient_errors[kind] += 1
                 if attempt == MAX_TRANSIENT_ATTEMPTS:
-                    given_up = TransientJudgeError(
+                    raise TransientJudgeError(
                         f"Gemini request failed after {attempt} attempts: {error}"
-                    )
-                    self._given_up = (candidate, given_up)
-                    raise given_up from error
-                self.retries += 1
+                    ) from error
                 delay_s = _retry_delay_s(error, kind, attempt)
+                if delay_s > MAX_RETRY_DELAY_S:
+                    raise TransientJudgeError(
+                        f"Gemini asked to retry in {delay_s:g} s, above the limit "
+                        f"of {MAX_RETRY_DELAY_S:g} s: {error}"
+                    ) from error
+                self.retries += 1
 
     def _wait_for_turn(self, delay_s: float) -> None:
         if self._last_call_s is not None:
@@ -308,6 +302,8 @@ def _judge_with_one_retry(
 ) -> Moment:
     try:
         return _attempt(candidate, window_segments, judge)
+    except TransientJudgeError:
+        raise
     except (JudgeError, ValueError):
         return _attempt(candidate, window_segments, judge)
 

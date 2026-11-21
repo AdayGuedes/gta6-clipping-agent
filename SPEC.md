@@ -209,16 +209,21 @@ a igualdad, por inicio ascendente.
   minuto). Vale para TODAS las llamadas, reintentos incluidos. Con 20
   candidatos son unos 4 minutos por VOD como mínimo.
 - Errores transitorios (D16): un 429, un 503 o un fallo de red se reintentan
-  dentro del juez, hasta 3 intentos por candidato. Ante un 429 se espera el
-  `retryDelay` que devuelve el servidor (si no lo da, el retroceso); ante un
-  503 o un fallo de red, retroceso de 15 s y 30 s entre intentos (60 s es el
-  tercer escalón del retroceso, que el tope de 3 intentos no llega a usar). La
+  dentro del juez, hasta 3 intentos en total por candidato. Ante un 429 se
+  espera el `retryDelay` que devuelve el servidor (si no lo da, el retroceso);
+  ante un 503 o un fallo de red, retroceso de 15 s y 30 s entre intentos. La
   espera nunca baja del ritmo de 12 s. Si los 3 intentos fallan, el candidato
-  se registra como fallo y no se vuelve a llamar por él.
+  se registra como fallo y no se vuelve a llamar por él: 3 llamadas en total,
+  no 6.
+- Tope de la espera (D18): si el servidor pide un `retryDelay` de más de 300 s
+  (`MAX_RETRY_DELAY_S`; por ejemplo, un 429 de cuota diaria), no se espera. El
+  candidato se registra como fallo con un error que dice cuánto pedía el
+  servidor, y se sigue con el resto.
 - Si la salida no valida (o trae tiempos fuera de la ventana, o falla la
   llamada por un motivo que no es transitorio, como un 400 o un 403), se repite
   la llamada una vez, con el ritmo de 12 s. Si vuelve a fallar, se registra el
-  fallo y se sigue con el resto de candidatos.
+  fallo y se sigue con el resto de candidatos. Este reintento único no se
+  aplica cuando el juez ya agotó los intentos transitorios.
 - Puntuación total = `reaccion_chat` (ya calculada por código) + las tres
   puntuaciones del juez. Se ordena de mayor a menor.
 - En cada ejecución registra cuántas llamadas a la API se hicieron (todas, las

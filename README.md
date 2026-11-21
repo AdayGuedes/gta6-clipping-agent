@@ -68,7 +68,8 @@ Ritmo del juez (D16, SPEC §8): `GeminiJudge` deja al menos 12 s entre llamadas
 a la API, por el techo de 5 peticiones por minuto del tier gratuito, así que 20
 candidatos tardan unos 4 minutos como mínimo. Un 429, un 503 o un fallo de red se
 reintentan esperando (el `retryDelay` del servidor o un retroceso de 15 s y 30 s),
-hasta 3 intentos por candidato.
+hasta 3 intentos por candidato. Si el servidor pide esperar más de 5 minutos (D18),
+el candidato se da por perdido y el error dice cuánto pedía.
 
 El sistema no sube ni publica nada: el resultado es un JSON para que lo
 revises y subas a mano.

@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add a rule banning local-tool prefixes and markers from project artifacts
 - Record decision D17 for the activity floor of the mean baseline fallback
 - Add sliding-window top-K peak detector and judge-free evaluation harness (D15)
-- Add 12 s call pacing and transient-error retries to the Gemini judge (D16)
+- Add 12 s call pacing and transient-error retries to the Gemini judge (D16, D18)
 
 ### Changed
 
