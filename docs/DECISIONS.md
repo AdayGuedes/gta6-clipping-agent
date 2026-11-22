@@ -287,9 +287,9 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
      la reacción con una ventana deslizante de W=60 s (paso de 1 s), una sola
      escala: sin multi-escala. `msg_min` sigue siendo mensajes por minuto.
   2. **Selección.** Top-K con K=20 por puntos de reacción, con supresión de
-     no-máximos (separación mínima de 120 s entre picos, la de `MERGE_GAP_S`).
-     Sustituye al umbral ×1,5 de D10 y al «sin relleno» de D11.5; el tope de
-     20 de D10 se mantiene. El detector nunca calla: con un chat con
+     no-máximos (separación mínima de 120 s entre picos, la de
+     `MIN_PEAK_SEPARATION_S`). Sustituye al umbral ×1,5 de D10 y al «sin
+     relleno» de D11.5; el tope de 20 de D10 se mantiene. El detector nunca calla: con un chat con
      actividad devuelve siempre candidatos hasta K, aunque la reacción sea
      débil. El único caso sin candidatos es el error explícito «chat sin
      actividad suficiente» de la SPEC 7.1.
@@ -401,6 +401,75 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
     debajo y justo en 1 mensaje/minuto).
   - El error es el mismo que ya existía, así que el CLI y el arnés lo tratan
     igual (salida 1).
+
+## D18 · 2026-11-21 · Tope a la espera del `retryDelay` (acota D16)
+
+- **Decisión:**
+  1. **Tope de 300 s.** `MAX_RETRY_DELAY_S = 300`. Si un 429 trae un
+     `retryDelay` de más de 5 minutos, no se espera: el candidato se da por
+     perdido en ese intento y el error registra cuánto pedía el servidor.
+     Hasta 300 s, incluido, se sigue esperando lo que pide (D16).
+  2. **El reintento único es solo para validación.** `judge_candidates` no
+     reintenta un `TransientJudgeError`: el juez ya gastó sus 3 intentos. Un
+     candidato que agota los transitorios cuesta exactamente 3 llamadas, no
+     6. `GeminiJudge` queda sin estado entre candidatos.
+  3. **El retroceso es de 15 s y 30 s.** D16 quiso decir 3 intentos en total,
+     así que hay dos esperas; el escalón de 60 s se quita.
+- **Por qué:** la revisión de la fase 6 mostró dos fallos de diseño. Un 429 de
+  cuota diaria puede pedir horas, y un CLI dormido sin avisar es el fallo
+  silencioso que este proyecto caza. Y la primera versión evitaba las 6
+  llamadas con una memoria de abandono dentro de `GeminiJudge`, que lo
+  acoplaba a cómo reintenta su llamador y lo hacía no idempotente. El «no
+  cambia» de `judge_candidates` en el encargo de la fase era una cota de
+  alcance, no un principio.
+- **Implica:**
+  - D16 queda como historia; D18 lo acota, como D17 acotó a D5.
+  - `judge_candidates` cambia en dos líneas; su firma y la interfaz `Judge`
+    (D12) no cambian. Se actualiza la SPEC §8.
+  - La detección de fallos de red (`OSError` o una clase `TransportError` de
+    httpx/httpx2) se acepta amplia: su coste está acotado a los 3 intentos.
+
+## D19 · 2026-11-21 · Modelo recomendado del juez en el tier gratuito (cierra la propuesta de la cuota diaria)
+
+- **Decisión:** el modelo recomendado es `gemini-3.5-flash-lite`
+  (`GEMINI_MODEL=gemini-3.5-flash-lite`).
+  - **Actualización (misma PR 8):** por dictamen del arquitecto, el modelo por
+    defecto del código también pasa a `gemini-3.5-flash-lite`
+    (`DEFAULT_GEMINI_MODEL`). La frase original de esta decisión, que decía que
+    el defecto no cambiaba, queda como historia del momento de la corrida.
+- **Cuotas del tier gratuito** (AI Studio, proyecto del juez, 2026-11-21):
+  - `gemini-3.8-flash`: 5 peticiones/min y **20/día**. Con K=20 (D15) una VOD
+    gasta la cuota del día sin un solo reintento.
+  - `gemini-3.6-flash`, `gemini-3-flash`, `gemini-2.5-flash`,
+    `gemini-4-hydrogen`: 5/min y 20/día. `gemini-2.5-flash-lite`: 10/min y
+    20/día. `gemini-2.5-pro` y `gemini-3.1-pro`: 0 en el tier gratuito.
+  - **`gemini-3.5-flash-lite` y `gemini-3.1-flash-lite`: 15/min y 500/día.**
+  - `gemma-4-26b` y `gemma-4-31b`: 30/min y 14.400/día, con 16K tokens/min.
+    No se eligen: no se ha comprobado que acepten el esquema JSON del juez.
+- **Criterio:** el más capaz con cuota diaria de al menos 100 peticiones (20
+  candidatos, reintentos y margen para repetir). Entre los dos Flash-Lite se
+  toma el 3.5, el más reciente.
+- **Corrida de cierre con ese modelo** (fixture de Rubius, CLI completo con
+  `--reference`, 2026-11-21, 229,5 s, salida 0):
+  - 20 llamadas, 32.052 tokens de entrada y 1.844 de salida; 0 reintentos, 0
+    errores transitorios y 0 errores de validación.
+  - 19 candidatos juzgados y 1 sin transcripción (el del hueco, 02:24:04),
+    como se esperaba. 5 momentos tras la desduplicación, de 58 a 64 puntos.
+  - **Evaluación del CLI: 2/10 clips de referencia** (±60 s), sobre los
+    momentos del juez (como mucho 5). Es la primera cifra a nivel de Moments.
+    No es la del arnés (5/10 a nivel de candidatos en K=20; 3/10 en K=5).
+- **Lectura:** el modelo valida bien en lo técnico (contrato, cuota, pacing y
+  coste de unos 4 minutos por VOD). En acierto, 2/10 con 5 momentos frente a un
+  azar de 0,46 en K=5 (arnés) apunta a señal, pero son 10 clips de una VOD,
+  con la referencia contaminada por fase (D15, F3): orientativo, no una
+  prueba. Además, los 5 momentos quedan en un rango estrecho (58-64), así que
+  el juez separa poco; solo se guardan los 5 mejores y no se ha medido el
+  reparto de los 19.
+- **Implica:**
+  - La recomendación se documenta en el README. Con ese modelo no hace falta el
+    tier de pago ni reducir K.
+  - Un cambio del modelo por defecto en el código, o una segunda VOD para
+    medir el acierto, quedan para el arquitecto.
 
 ## Propuestas
 

@@ -1,16 +1,23 @@
+import itertools
 import json
 
 import pytest
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import ValidationError
 
 import src.judge as judge_module
 from src.judge import (
     DEFAULT_GEMINI_MODEL,
+    MAX_RETRY_DELAY_S,
+    MAX_TRANSIENT_ATTEMPTS,
+    MIN_CALL_INTERVAL_S,
+    TRANSIENT_BACKOFF_S,
     GeminiJudge,
     JudgeConfigError,
     JudgeError,
     Judgment,
+    TransientJudgeError,
     build_prompt,
     judge_candidates,
     round_half_up,
@@ -24,8 +31,12 @@ def isolate_environment(monkeypatch):
     def forbidden_client(*args, **kwargs):
         raise AssertionError("tests must never build the real Gemini client")
 
+    def forbidden_sleep(seconds):
+        raise AssertionError("tests must never sleep for real")
+
     monkeypatch.setattr(judge_module, "load_dotenv", lambda *a, **k: None)
     monkeypatch.setattr(judge_module.genai, "Client", forbidden_client)
+    monkeypatch.setattr(judge_module.time, "sleep", forbidden_sleep)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
@@ -107,13 +118,30 @@ def make_usage(prompt=None, candidates=None, thoughts=None):
     )
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
 class FakeModels:
-    def __init__(self, outcomes):
+    def __init__(self, outcomes, clock=None):
         self._outcomes = list(outcomes)
+        self._clock = clock
         self.requests = []
+        self.call_times = []
 
     def generate_content(self, *, model, contents, config):
         self.requests.append({"model": model, "contents": contents, "config": config})
+        if self._clock is not None:
+            self.call_times.append(self._clock.now)
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -121,8 +149,51 @@ class FakeModels:
 
 
 class FakeClient:
-    def __init__(self, *outcomes):
-        self.models = FakeModels(outcomes)
+    def __init__(self, *outcomes, clock=None):
+        self.models = FakeModels(outcomes, clock)
+
+
+def make_paced_judge(*outcomes):
+    clock = FakeClock()
+    client = FakeClient(*outcomes, clock=clock)
+    judge = GeminiJudge(client=client, clock=clock, sleeper=clock.sleep)
+    return judge, client, clock
+
+
+def api_error(code, retry_delay=None, status=None):
+    details = [
+        {
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [{"quotaMetric": "requests"}],
+        }
+    ]
+    if retry_delay is not None:
+        details.append(
+            {
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": retry_delay,
+            }
+        )
+    cls = genai_errors.ClientError if code < 500 else genai_errors.ServerError
+    return cls(
+        code,
+        {
+            "error": {
+                "code": code,
+                "message": f"provider said {code}",
+                "status": status or "ERROR",
+                "details": details,
+            }
+        },
+    )
+
+
+def rate_limit_error(retry_delay=None):
+    return api_error(429, retry_delay, "RESOURCE_EXHAUSTED")
+
+
+def unavailable_error():
+    return api_error(503, None, "UNAVAILABLE")
 
 
 def judgment_json(**overrides):
@@ -573,7 +644,7 @@ def test_injected_client_needs_no_api_key():
 
 
 def test_model_defaults_when_the_variable_is_unset():
-    assert GeminiJudge(client=FakeClient()).model == "gemini-3.8-flash"
+    assert GeminiJudge(client=FakeClient()).model == "gemini-3.5-flash-lite"
 
 
 def test_model_defaults_when_the_variable_is_blank(monkeypatch):
@@ -664,7 +735,7 @@ def test_counters_start_at_zero():
 
 
 def test_counters_accumulate_across_calls():
-    client = FakeClient(
+    judge, _, _ = make_paced_judge(
         make_response(
             judgment_json(), make_usage(prompt=1000, candidates=60, thoughts=40)
         ),
@@ -672,7 +743,6 @@ def test_counters_accumulate_across_calls():
             judgment_json(), make_usage(prompt=500, candidates=30, thoughts=None)
         ),
     )
-    judge = GeminiJudge(client=client)
     candidate = make_candidate()
     segments = make_segments((100, 200))
 
@@ -715,11 +785,10 @@ def test_gemini_judge_end_to_end_with_judge_candidates():
 
 
 def test_api_error_then_success_counts_two_calls():
-    client = FakeClient(
-        RuntimeError("503 unavailable"),
+    judge, _, _ = make_paced_judge(
+        unavailable_error(),
         make_response(judgment_json(), make_usage(prompt=700, candidates=40)),
     )
-    judge = GeminiJudge(client=client)
 
     moments, errors = judge_candidates(
         [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
@@ -728,3 +797,447 @@ def test_api_error_then_success_counts_two_calls():
     assert errors == []
     assert len(moments) == 1
     assert (judge.calls, judge.input_tokens, judge.output_tokens) == (2, 700, 40)
+
+
+# GeminiJudge: pacing
+
+
+def call(judge):
+    return judge.judge(make_candidate(), make_segments((100, 200)))
+
+
+def ok(**usage):
+    return make_response(judgment_json(), make_usage(**usage) if usage else None)
+
+
+def test_pacing_constants_follow_d16():
+    assert MIN_CALL_INTERVAL_S == 12
+    assert MAX_TRANSIENT_ATTEMPTS == 3
+    assert TRANSIENT_BACKOFF_S == (15, 30)
+    assert len(TRANSIENT_BACKOFF_S) == MAX_TRANSIENT_ATTEMPTS - 1
+    assert MAX_RETRY_DELAY_S == 300
+
+
+def test_first_call_does_not_wait():
+    judge, _, clock = make_paced_judge(ok())
+
+    call(judge)
+
+    assert clock.sleeps == []
+
+
+def test_second_call_waits_the_remainder_of_the_interval():
+    judge, client, clock = make_paced_judge(ok(), ok())
+
+    call(judge)
+    clock.now += 5
+    call(judge)
+
+    assert clock.sleeps == [7.0]
+    assert client.models.call_times[1] - client.models.call_times[0] == 12
+
+
+def test_second_call_does_not_wait_when_the_interval_has_passed():
+    judge, _, clock = make_paced_judge(ok(), ok())
+
+    call(judge)
+    clock.now += 12
+    call(judge)
+
+    assert clock.sleeps == []
+
+
+def test_back_to_back_calls_wait_the_full_interval():
+    judge, _, clock = make_paced_judge(ok(), ok(), ok())
+
+    for _ in range(3):
+        call(judge)
+
+    assert clock.sleeps == [12.0, 12.0]
+
+
+def test_interval_is_measured_from_the_start_of_the_previous_call():
+    clock = FakeClock()
+
+    class SlowModels(FakeModels):
+        def generate_content(self, **kwargs):
+            clock.now += 4
+            return super().generate_content(**kwargs)
+
+    client = FakeClient()
+    client.models = SlowModels([ok(), ok()], clock)
+    judge = GeminiJudge(client=client, clock=clock, sleeper=clock.sleep)
+
+    call(judge)
+    call(judge)
+
+    assert clock.sleeps == [8.0]
+
+
+def test_a_validation_retry_is_paced_like_any_other_call():
+    judge, client, clock = make_paced_judge(
+        make_response("not json"), make_response(judgment_json())
+    )
+
+    moments, errors = judge_candidates(
+        [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
+    )
+
+    assert errors == []
+    assert len(moments) == 1
+    assert clock.sleeps == [12.0]
+    assert client.models.call_times == [1000.0, 1012.0]
+
+
+def test_every_call_of_a_whole_run_keeps_the_minimum_interval():
+    candidates = [make_candidate(s, s + 100) for s in range(0, 2000, 200)]
+    responses = [
+        make_response(judgment_json(start_s=s + 10, end_s=s + 60))
+        for s in range(0, 2000, 200)
+    ]
+    judge, client, _ = make_paced_judge(*responses)
+
+    moments, errors = judge_candidates(candidates, WIDE_TRANSCRIPT, judge)
+
+    assert errors == []
+    assert len(moments) == 5
+    times = client.models.call_times
+    assert len(times) == 10
+    assert all(later - earlier >= 12 for earlier, later in itertools.pairwise(times))
+
+
+def test_default_clock_and_sleeper_are_the_real_ones():
+    judge = GeminiJudge(client=FakeClient())
+
+    assert judge._clock is judge_module.time.monotonic
+    assert judge._sleep is judge_module.time.sleep
+
+
+# GeminiJudge: transient errors
+
+
+def test_rate_limit_waits_the_server_retry_delay_and_retries():
+    judge, client, clock = make_paced_judge(
+        rate_limit_error("37s"), ok(prompt=700, candidates=40)
+    )
+
+    result = call(judge)
+
+    assert result.hook == "El coche vuela"
+    assert clock.sleeps == [37.0]
+    assert len(client.models.requests) == 2
+    assert (judge.calls, judge.input_tokens, judge.output_tokens) == (2, 700, 40)
+
+
+def test_rate_limit_accepts_a_fractional_retry_delay():
+    judge, _, clock = make_paced_judge(rate_limit_error("37.5s"), ok())
+
+    call(judge)
+
+    assert clock.sleeps == [37.5]
+
+
+def test_a_short_retry_delay_is_raised_to_the_minimum_interval():
+    judge, client, clock = make_paced_judge(rate_limit_error("2s"), ok())
+
+    call(judge)
+
+    assert clock.sleeps == [12.0]
+    assert client.models.call_times == [1000.0, 1012.0]
+
+
+@pytest.mark.parametrize("retry_delay", [None, "soon", "-5s", "5", "5m", ""])
+def test_rate_limit_without_a_usable_retry_delay_uses_the_backoff(retry_delay):
+    judge, _, clock = make_paced_judge(rate_limit_error(retry_delay), ok())
+
+    call(judge)
+
+    assert clock.sleeps == [15.0]
+
+
+def test_service_unavailable_backs_off_15_then_30_seconds():
+    judge, client, clock = make_paced_judge(
+        unavailable_error(), unavailable_error(), ok()
+    )
+
+    call(judge)
+
+    assert clock.sleeps == [15.0, 30.0]
+    assert len(client.models.requests) == 3
+    assert judge.calls == 3
+
+
+def test_service_unavailable_ignores_a_retry_delay_in_the_payload():
+    error = api_error(503, "99s", "UNAVAILABLE")
+    judge, _, clock = make_paced_judge(error, ok())
+
+    call(judge)
+
+    assert clock.sleeps == [15.0]
+
+
+class TransportError(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionError("connection reset"),
+        TimeoutError("timed out"),
+        OSError("network unreachable"),
+        TransportError("httpx style transport failure"),
+    ],
+)
+def test_network_errors_are_transient(error):
+    judge, _, clock = make_paced_judge(error, ok())
+
+    call(judge)
+
+    assert clock.sleeps == [15.0]
+    assert judge.calls == 2
+    assert judge.transient_errors == {"network": 1}
+
+
+def test_three_transient_failures_give_up_with_a_transient_judge_error():
+    last = unavailable_error()
+    judge, client, clock = make_paced_judge(
+        unavailable_error(), unavailable_error(), last
+    )
+
+    with pytest.raises(TransientJudgeError, match="after 3 attempts") as excinfo:
+        call(judge)
+
+    assert isinstance(excinfo.value, JudgeError)
+    assert excinfo.value.__cause__ is last
+    assert clock.sleeps == [15.0, 30.0]
+    assert len(client.models.requests) == 3
+    assert (judge.calls, judge.input_tokens, judge.output_tokens) == (3, 0, 0)
+
+
+@pytest.mark.parametrize("code", [400, 401, 403, 404, 500])
+def test_other_http_errors_are_not_transient(code):
+    judge, client, clock = make_paced_judge(api_error(code))
+
+    with pytest.raises(JudgeError, match=f"{code}") as excinfo:
+        call(judge)
+
+    assert not isinstance(excinfo.value, TransientJudgeError)
+    assert clock.sleeps == []
+    assert len(client.models.requests) == 1
+    assert judge.retries == 0
+    assert judge.transient_errors == {}
+
+
+def test_a_plain_exception_is_not_transient():
+    judge, _, clock = make_paced_judge(RuntimeError("boom"))
+
+    with pytest.raises(JudgeError, match="boom") as excinfo:
+        call(judge)
+
+    assert not isinstance(excinfo.value, TransientJudgeError)
+    assert clock.sleeps == []
+    assert judge.calls == 1
+
+
+def test_validation_errors_are_never_retried_inside_the_judge():
+    judge, client, clock = make_paced_judge(make_response("not json"))
+
+    with pytest.raises(ValidationError):
+        call(judge)
+
+    assert clock.sleeps == []
+    assert len(client.models.requests) == 1
+
+
+def test_empty_response_is_not_retried_inside_the_judge():
+    judge, client, _ = make_paced_judge(make_response(""))
+
+    with pytest.raises(JudgeError, match="empty response"):
+        call(judge)
+
+    assert len(client.models.requests) == 1
+
+
+def test_retries_and_transient_error_counters():
+    judge, _, _ = make_paced_judge(
+        rate_limit_error("20s"), unavailable_error(), rate_limit_error(), ok()
+    )
+
+    with pytest.raises(TransientJudgeError):
+        call(judge)
+    assert (judge.calls, judge.retries) == (3, 2)
+    assert judge.transient_errors == {"429": 2, "503": 1}
+
+
+def test_counters_start_without_retries_or_transient_errors():
+    judge = GeminiJudge(client=FakeClient())
+    assert judge.retries == 0
+    assert judge.transient_errors == {}
+
+
+def test_transient_attempts_are_counted_per_judge_call():
+    judge, client, _ = make_paced_judge(
+        unavailable_error(), unavailable_error(), unavailable_error(), ok()
+    )
+
+    with pytest.raises(TransientJudgeError):
+        call(judge)
+    other = make_candidate(500, 600)
+    judge.judge(other, make_segments((500, 600)))
+
+    assert len(client.models.requests) == 4
+
+
+# GeminiJudge inside judge_candidates: transient errors
+
+
+def test_exhausted_transient_errors_cost_exactly_three_calls_end_to_end():
+    failing = make_candidate(100, 235)
+    working = make_candidate(500, 600)
+    judge, client, _ = make_paced_judge(
+        unavailable_error(),
+        unavailable_error(),
+        unavailable_error(),
+        make_response(judgment_json(start_s=510, end_s=560)),
+    )
+
+    moments, errors = judge_candidates([failing, working], WIDE_TRANSCRIPT, judge)
+
+    assert len(client.models.requests) == 4
+    assert judge.calls == 4
+    assert [(m.inicio, m.fin) for m in moments] == [("00:08:30", "00:09:20")]
+    assert len(errors) == 1
+    assert errors[0].startswith("candidate 00:01:40-00:03:55: ")
+    assert "after 3 attempts" in errors[0]
+    assert "\n" not in errors[0]
+
+
+def test_the_judge_keeps_no_memory_of_a_candidate_it_gave_up_on():
+    candidate = make_candidate(100, 235)
+    segments = make_segments((100, 200))
+    judge, client, _ = make_paced_judge(
+        unavailable_error(), unavailable_error(), unavailable_error(), ok()
+    )
+
+    with pytest.raises(TransientJudgeError):
+        judge.judge(candidate, segments)
+    result = judge.judge(candidate, segments)
+
+    assert result.hook == "El coche vuela"
+    assert len(client.models.requests) == 4
+
+
+def test_judge_candidates_does_not_retry_a_transient_judge_error():
+    failing = make_candidate(100, 235)
+    judge = FakeJudge(
+        {100: [TransientJudgeError("after 3 attempts"), make_judgment(110, 160)]}
+    )
+
+    moments, errors = judge_candidates([failing], WIDE_TRANSCRIPT, judge)
+
+    assert len(judge.calls_for(100)) == 1
+    assert moments == []
+    assert errors == ["candidate 00:01:40-00:03:55: after 3 attempts"]
+
+
+def test_rate_limit_inside_a_run_is_retried_and_the_candidate_is_kept():
+    judge, _, clock = make_paced_judge(
+        rate_limit_error("20s"), ok(prompt=800, candidates=50, thoughts=25)
+    )
+
+    moments, errors = judge_candidates(
+        [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
+    )
+
+    assert errors == []
+    assert len(moments) == 1
+    assert clock.sleeps == [20.0]
+    assert (judge.calls, judge.input_tokens, judge.output_tokens) == (2, 800, 75)
+    assert judge.transient_errors == {"429": 1}
+
+
+def test_validation_error_after_a_transient_retry_still_gets_its_single_retry():
+    judge, _, _ = make_paced_judge(
+        unavailable_error(),
+        make_response("not json"),
+        make_response(judgment_json()),
+    )
+
+    moments, errors = judge_candidates(
+        [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
+    )
+
+    assert errors == []
+    assert len(moments) == 1
+    assert judge.calls == 3
+
+
+def test_a_non_transient_failure_keeps_the_single_retry_of_the_caller():
+    judge, client, clock = make_paced_judge(api_error(400), api_error(400))
+
+    moments, errors = judge_candidates(
+        [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
+    )
+
+    assert moments == []
+    assert len(errors) == 1
+    assert len(client.models.requests) == 2
+    assert clock.sleeps == [12.0]
+
+
+# GeminiJudge: cap on the server retry delay (D18)
+
+
+def test_a_retry_delay_at_the_cap_is_waited():
+    judge, _, clock = make_paced_judge(rate_limit_error("300s"), ok())
+
+    call(judge)
+
+    assert clock.sleeps == [300.0]
+    assert judge.retries == 1
+
+
+@pytest.mark.parametrize("retry_delay", ["300.5s", "301s", "86400s"])
+def test_a_retry_delay_above_the_cap_gives_up_without_waiting(retry_delay):
+    judge, client, clock = make_paced_judge(rate_limit_error(retry_delay), ok())
+
+    with pytest.raises(TransientJudgeError) as excinfo:
+        call(judge)
+
+    message = str(excinfo.value)
+    assert f"retry in {retry_delay[:-1]} s" in message
+    assert "above the limit of 300 s" in message
+    assert isinstance(excinfo.value.__cause__, genai_errors.ClientError)
+    assert clock.sleeps == []
+    assert len(client.models.requests) == 1
+    assert (judge.calls, judge.retries) == (1, 0)
+    assert judge.transient_errors == {"429": 1}
+
+
+def test_a_capped_retry_delay_costs_one_call_through_judge_candidates():
+    judge, client, clock = make_paced_judge(rate_limit_error("3600s"), ok())
+
+    moments, errors = judge_candidates(
+        [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
+    )
+
+    assert moments == []
+    assert len(errors) == 1
+    assert "retry in 3600 s, above the limit of 300 s" in errors[0]
+    assert len(client.models.requests) == 1
+    assert clock.sleeps == []
+
+
+def test_a_candidate_that_exhausts_transient_errors_costs_three_calls_not_six():
+    judge, client, clock = make_paced_judge(*[unavailable_error() for _ in range(6)])
+
+    moments, errors = judge_candidates(
+        [make_candidate(100, 235)], WIDE_TRANSCRIPT, judge
+    )
+
+    assert moments == []
+    assert len(errors) == 1
+    assert len(client.models.requests) == 3
+    assert judge.calls == 3
+    assert clock.sleeps == [15.0, 30.0]

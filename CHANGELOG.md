@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add a rule banning local-tool prefixes and markers from project artifacts
 - Record decision D17 for the activity floor of the mean baseline fallback
 - Add sliding-window top-K peak detector and judge-free evaluation harness (D15)
+- Add 12 s call pacing and transient-error retries to the Gemini judge (D16, D18)
+- Recommend gemini-3.5-flash-lite for the judge on the free tier and record D19
+- Make gemini-3.5-flash-lite the default judge model, replacing gemini-3.8-flash
 
 ### Changed
 
 - Resolve SPEC open questions and record decision D5
+- Rename MERGE_GAP_S to MIN_PEAK_SEPARATION_S, with no change in behaviour
