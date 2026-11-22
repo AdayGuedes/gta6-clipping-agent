@@ -434,6 +434,21 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
 arquitecto las resuelva y se registren como D-n.
 
+### Cuota diaria del tier gratuito del juez (2026-11-21)
+
+- **Dato de la corrida de cierre de la fase 6:** el 429 que agotó la corrida
+  decía `generate_content_free_tier_requests, limit: 20, model:
+  gemini-3.8-flash` por día, con un `retryDelay` de unas 7 h. Con K=20 (D15)
+  una VOD ya gasta las 20 peticiones diarias sin un solo reintento, y los
+  503 y las pruebas previas se las comen: la corrida dio 5 momentos de 20
+  candidatos.
+- **Opciones, sin decidir:** (a) tier de pago; (b) otro modelo con más cuota
+  diaria; (c) reducir K del juez (el detector sigue en 20 y el juez recibe los
+  mejores por reacción); (d) una corrida reanudable que reparta los candidatos
+  en varios días.
+- **Para decidir:** la cifra a nivel de Moments (1/10 sobre 5 momentos) no
+  valora el acierto del juez mientras falten 15 candidatos.
+
 ### Revisión del detector de picos tras la corrida real (2026-11-20)
 
 - **Estado:** parcialmente resuelta por D15 (2026-11-20): resolución de la

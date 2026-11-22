@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Fase actual:** v1 abierta. El v0 está cerrado: la prueba con un VOD real de
+**Fase actual:** v1 abierta, fase 6 en PR. El v0 está cerrado: la prueba con un VOD real de
 8:34:30 ([nota de la fase 4](docs/sessions/2026-11-19-fase-4.md)) dio 0
 candidatos y 0/10 clips de referencia, porque el chat de ese directo es
 demasiado plano para el umbral ×1,5 (máximo ×1,31). El detector queda decidido
@@ -35,5 +35,14 @@ fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
         ([nota](docs/sessions/2026-11-20-fase-5.md))
       - [ ] Primera corrida del juez real sobre el fixture (2026-11-20): 0 de
         20 candidatos (12 × 429 por el límite de 5 peticiones por minuto del
-        tier gratuito, 7 × 503, 1 sin transcripción). Pendiente decisión del
-        arquitecto sobre ritmo y reintentos del juez
+        tier gratuito, 7 × 503, 1 sin transcripción). Resuelto por D16 y la
+        fase 6.
+- [ ] Fase 6 resiliencia del juez (D16, D18): pacing de 12 s, reintentos de
+      errores transitorios con tope al `retryDelay` y `judge_candidates` sin
+      reintento tras agotar transitorios. Implementada y en PR (653 tests en
+      verde). La corrida de cierre (2026-11-21) validó el contrato con Gemini y
+      el tope, pero no el acierto: la cuota diaria del tier gratuito
+      (20 peticiones/día para `gemini-3.8-flash`) se agotó tras 5 de 20
+      candidatos. Evaluación del CLI sobre esos 5 momentos: 1/10. Pendiente
+      decisión del arquitecto sobre la cuota diaria
+      ([nota](docs/sessions/2026-11-21-fase-6.md))
