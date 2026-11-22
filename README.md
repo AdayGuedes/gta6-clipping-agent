@@ -64,11 +64,11 @@ el error `chat sin actividad suficiente`; un chat de más de 48 h, con `1` y un
 error que nombra el valor; y una referencia sin clips, con `1` y
 `reference has no clips`, antes de llamar al juez.
 
-Modelo recomendado del juez (D19): `GEMINI_MODEL=gemini-3.5-flash-lite` en tu
-`.env`. En el tier gratuito `gemini-3.8-flash`, el modelo por defecto, admite
-solo 20 peticiones al día, menos que los 20 candidatos de una VOD más los
-reintentos; `gemini-3.5-flash-lite` admite 15 por minuto y 500 al día. Con él, la
-corrida sobre el fixture de Rubius tarda unos 4 minutos y no dio ningún error.
+Modelo del juez (D19): por defecto es `gemini-3.5-flash-lite`; se cambia con
+`GEMINI_MODEL` en tu `.env`. En el tier gratuito admite 15 peticiones por minuto y
+500 al día. `gemini-3.8-flash` solo admite 20 al día, menos que los 20
+candidatos de una VOD más los reintentos. Con el modelo por defecto, la corrida
+sobre el fixture de Rubius tarda unos 4 minutos y no dio ningún error.
 
 Ritmo del juez (D16, SPEC §8): `GeminiJudge` deja al menos 12 s entre llamadas
 a la API, por el techo de 5 peticiones por minuto del tier gratuito, así que 20

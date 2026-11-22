@@ -24,7 +24,7 @@ from src.models import (
 )
 from src.timeparse import hhmmss_to_seconds, seconds_to_hhmmss
 
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 API_KEY_VARIABLE = "GEMINI_API_KEY"
 MODEL_VARIABLE = "GEMINI_MODEL"
 MAX_MOMENTS = 5

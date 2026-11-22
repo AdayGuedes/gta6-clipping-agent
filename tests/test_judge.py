@@ -644,7 +644,7 @@ def test_injected_client_needs_no_api_key():
 
 
 def test_model_defaults_when_the_variable_is_unset():
-    assert GeminiJudge(client=FakeClient()).model == "gemini-3.8-flash"
+    assert GeminiJudge(client=FakeClient()).model == "gemini-3.5-flash-lite"
 
 
 def test_model_defaults_when_the_variable_is_blank(monkeypatch):
