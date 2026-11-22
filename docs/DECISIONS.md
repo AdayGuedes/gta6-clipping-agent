@@ -432,9 +432,11 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
 ## D19 · 2026-11-21 · Modelo recomendado del juez en el tier gratuito (cierra la propuesta de la cuota diaria)
 
 - **Decisión:** el modelo recomendado es `gemini-3.5-flash-lite`
-  (`GEMINI_MODEL=gemini-3.5-flash-lite`). El modelo por defecto del código
-  (`gemini-3.8-flash`) no cambia: `DEFAULT_GEMINI_MODEL` sigue como está y la
-  recomendación vive en la documentación y en el `.env` de quien ejecuta.
+  (`GEMINI_MODEL=gemini-3.5-flash-lite`).
+  - **Actualización (misma PR 8):** por dictamen del arquitecto, el modelo por
+    defecto del código también pasa a `gemini-3.5-flash-lite`
+    (`DEFAULT_GEMINI_MODEL`). La frase original de esta decisión, que decía que
+    el defecto no cambiaba, queda como historia del momento de la corrida.
 - **Cuotas del tier gratuito** (AI Studio, proyecto del juez, 2026-11-21):
   - `gemini-3.8-flash`: 5 peticiones/min y **20/día**. Con K=20 (D15) una VOD
     gasta la cuota del día sin un solo reintento.
