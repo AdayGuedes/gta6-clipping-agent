@@ -40,9 +40,8 @@ fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
 - [ ] Fase 6 resiliencia del juez (D16, D18): pacing de 12 s, reintentos de
       errores transitorios con tope al `retryDelay` y `judge_candidates` sin
       reintento tras agotar transitorios. Implementada y en PR (653 tests en
-      verde). La corrida de cierre (2026-11-21) validó el contrato con Gemini y
-      el tope, pero no el acierto: la cuota diaria del tier gratuito
-      (20 peticiones/día para `gemini-3.8-flash`) se agotó tras 5 de 20
-      candidatos. Evaluación del CLI sobre esos 5 momentos: 1/10. Pendiente
-      decisión del arquitecto sobre la cuota diaria
+      verde). Con `gemini-3.8-flash` la cuota diaria (20 peticiones) se agotó
+      tras 5 de 20 candidatos; con `gemini-3.5-flash-lite` (500/día, D19) la
+      corrida de cierre juzgó los 19 candidatos con transcripción en 229 s, sin
+      errores, y el CLI evaluó 2/10 clips de referencia con 5 momentos
       ([nota](docs/sessions/2026-11-21-fase-6.md))

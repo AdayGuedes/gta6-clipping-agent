@@ -429,25 +429,50 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - La detección de fallos de red (`OSError` o una clase `TransportError` de
     httpx/httpx2) se acepta amplia: su coste está acotado a los 3 intentos.
 
+## D19 · 2026-11-21 · Modelo recomendado del juez en el tier gratuito (cierra la propuesta de la cuota diaria)
+
+- **Decisión:** el modelo recomendado es `gemini-3.5-flash-lite`
+  (`GEMINI_MODEL=gemini-3.5-flash-lite`). El modelo por defecto del código
+  (`gemini-3.8-flash`) no cambia: `DEFAULT_GEMINI_MODEL` sigue como está y la
+  recomendación vive en la documentación y en el `.env` de quien ejecuta.
+- **Cuotas del tier gratuito** (AI Studio, proyecto del juez, 2026-11-21):
+  - `gemini-3.8-flash`: 5 peticiones/min y **20/día**. Con K=20 (D15) una VOD
+    gasta la cuota del día sin un solo reintento.
+  - `gemini-3.6-flash`, `gemini-3-flash`, `gemini-2.5-flash`,
+    `gemini-4-hydrogen`: 5/min y 20/día. `gemini-2.5-flash-lite`: 10/min y
+    20/día. `gemini-2.5-pro` y `gemini-3.1-pro`: 0 en el tier gratuito.
+  - **`gemini-3.5-flash-lite` y `gemini-3.1-flash-lite`: 15/min y 500/día.**
+  - `gemma-4-26b` y `gemma-4-31b`: 30/min y 14.400/día, con 16K tokens/min.
+    No se eligen: no se ha comprobado que acepten el esquema JSON del juez.
+- **Criterio:** el más capaz con cuota diaria de al menos 100 peticiones (20
+  candidatos, reintentos y margen para repetir). Entre los dos Flash-Lite se
+  toma el 3.5, el más reciente.
+- **Corrida de cierre con ese modelo** (fixture de Rubius, CLI completo con
+  `--reference`, 2026-11-21, 229,5 s, salida 0):
+  - 20 llamadas, 32.052 tokens de entrada y 1.844 de salida; 0 reintentos, 0
+    errores transitorios y 0 errores de validación.
+  - 19 candidatos juzgados y 1 sin transcripción (el del hueco, 02:24:04),
+    como se esperaba. 5 momentos tras la desduplicación, de 58 a 64 puntos.
+  - **Evaluación del CLI: 2/10 clips de referencia** (±60 s), sobre los
+    momentos del juez (como mucho 5). Es la primera cifra a nivel de Moments.
+    No es la del arnés (5/10 a nivel de candidatos en K=20; 3/10 en K=5).
+- **Lectura:** el modelo valida bien en lo técnico (contrato, cuota, pacing y
+  coste de unos 4 minutos por VOD). En acierto, 2/10 con 5 momentos frente a un
+  azar de 0,46 en K=5 (arnés) apunta a señal, pero son 10 clips de una VOD,
+  con la referencia contaminada por fase (D15, F3): orientativo, no una
+  prueba. Además, los 5 momentos quedan en un rango estrecho (58-64), así que
+  el juez separa poco; solo se guardan los 5 mejores y no se ha medido el
+  reparto de los 19.
+- **Implica:**
+  - La recomendación se documenta en el README. Con ese modelo no hace falta el
+    tier de pago ni reducir K.
+  - Un cambio del modelo por defecto en el código, o una segunda VOD para
+    medir el acierto, quedan para el arquitecto.
+
 ## Propuestas
 
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
 arquitecto las resuelva y se registren como D-n.
-
-### Cuota diaria del tier gratuito del juez (2026-11-21)
-
-- **Dato de la corrida de cierre de la fase 6:** el 429 que agotó la corrida
-  decía `generate_content_free_tier_requests, limit: 20, model:
-  gemini-3.8-flash` por día, con un `retryDelay` de unas 7 h. Con K=20 (D15)
-  una VOD ya gasta las 20 peticiones diarias sin un solo reintento, y los
-  503 y las pruebas previas se las comen: la corrida dio 5 momentos de 20
-  candidatos.
-- **Opciones, sin decidir:** (a) tier de pago; (b) otro modelo con más cuota
-  diaria; (c) reducir K del juez (el detector sigue en 20 y el juez recibe los
-  mejores por reacción); (d) una corrida reanudable que reparta los candidatos
-  en varios días.
-- **Para decidir:** la cifra a nivel de Moments (1/10 sobre 5 momentos) no
-  valora el acierto del juez mientras falten 15 candidatos.
 
 ### Revisión del detector de picos tras la corrida real (2026-11-20)
 
