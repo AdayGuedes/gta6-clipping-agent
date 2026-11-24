@@ -12,6 +12,7 @@ from src.judge import (
     MAX_RETRY_DELAY_S,
     MAX_TRANSIENT_ATTEMPTS,
     MIN_CALL_INTERVAL_S,
+    OUT_OF_WINDOW_TOLERANCE_S,
     TRANSIENT_BACKOFF_S,
     GeminiJudge,
     JudgeConfigError,
@@ -470,6 +471,101 @@ def test_persistent_out_of_window_judgment_skips_only_that_candidate():
     assert len(errors) == 1
     assert errors[0].startswith("candidate 00:01:40-00:03:55: ")
     assert "outside the candidate window" in errors[0]
+
+
+def test_out_of_window_tolerance_is_two_seconds():
+    assert OUT_OF_WINDOW_TOLERANCE_S == 2.0
+
+
+def test_start_slightly_before_the_window_is_clamped_without_a_retry():
+    candidate = make_candidate(100, 235)
+    judge = FakeJudge({100: [make_judgment(99.1, 160)]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert len(judge.calls) == 1
+    assert errors == []
+    assert [(m.inicio, m.fin) for m in moments] == [("00:01:40", "00:02:40")]
+
+
+def test_end_slightly_after_the_window_is_clamped_without_a_retry():
+    candidate = make_candidate(100, 235)
+    judge = FakeJudge({100: [make_judgment(110, 236.5)]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert len(judge.calls) == 1
+    assert errors == []
+    assert [(m.inicio, m.fin) for m in moments] == [("00:01:50", "00:03:55")]
+
+
+def test_both_bounds_slightly_outside_are_clamped_to_the_window():
+    candidate = make_candidate(100, 235)
+    judge = FakeJudge({100: [make_judgment(98.5, 236.0)]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert errors == []
+    assert [(m.inicio, m.fin) for m in moments] == [("00:01:40", "00:03:55")]
+
+
+def test_a_bound_exactly_at_the_tolerance_is_clamped():
+    candidate = make_candidate(100, 235)
+    judge = FakeJudge({100: [make_judgment(98.0, 237.0)]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert errors == []
+    assert len(moments) == 1
+
+
+@pytest.mark.parametrize("start_s, end_s", [(97.9, 160), (110, 237.1)])
+def test_a_bound_beyond_the_tolerance_still_fails_after_one_retry(start_s, end_s):
+    candidate = make_candidate(100, 235)
+    bad = make_judgment(start_s, end_s)
+    judge = FakeJudge({100: [bad, bad]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert len(judge.calls) == 2
+    assert moments == []
+    assert len(errors) == 1
+    assert "outside the candidate window" in errors[0]
+    assert "more than 2 s" in errors[0]
+
+
+def test_a_judgment_beside_the_window_is_not_turned_into_an_empty_moment():
+    candidate = make_candidate(100, 235)
+    beside = make_judgment(98.5, 99.5)
+    judge = FakeJudge({100: [beside, beside]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert moments == []
+    assert len(errors) == 1
+    assert "no part inside the candidate window" in errors[0]
+
+
+def test_a_judgment_just_after_the_window_is_not_turned_into_an_empty_moment():
+    candidate = make_candidate(100, 235)
+    beside = make_judgment(236.0, 237.0)
+    judge = FakeJudge({100: [beside, beside]})
+
+    moments, errors = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert moments == []
+    assert "no part inside the candidate window" in errors[0]
+
+
+def test_a_clamped_moment_keeps_the_scores_of_the_judgment():
+    candidate = make_candidate(100, 235, reaction_points=15.0)
+    judge = FakeJudge(
+        {100: [make_judgment(99.1, 160, context=20, novelty=15, hook=12)]}
+    )
+
+    moments, _ = judge_candidates([candidate], WIDE_TRANSCRIPT, judge)
+
+    assert moments[0].puntuacion == 15 + 20 + 15 + 12
 
 
 def test_validation_error_is_retried_once():

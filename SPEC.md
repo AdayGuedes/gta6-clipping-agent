@@ -198,7 +198,10 @@ a igualdad, por inicio ascendente.
 - Recibe SOLO los candidatos de la fase 2, cada uno con su trozo de
   transcripción. Nunca recibe el VOD entero.
 - Ajusta `inicio`/`fin` fino dentro de la ventana candidata. No puede
-  devolver timestamps fuera de ella.
+  devolver timestamps fuera de ella, con una tolerancia (D20): un tiempo que se
+  sale de la ventana por 2 s o menos (`OUT_OF_WINDOW_TOLERANCE_S`) se recorta
+  al borde de la ventana, sin reintento; más allá de 2 s, o si tras recortar no
+  queda un tramo con duración, el juicio es inválido.
 - Puntúa contexto, novedad y gancho según la rúbrica, asigna una categoría de
   la lista cerrada y escribe el gancho en el idioma dominante de la
   transcripción (español o inglés).
@@ -219,7 +222,8 @@ a igualdad, por inicio ascendente.
   (`MAX_RETRY_DELAY_S`; por ejemplo, un 429 de cuota diaria), no se espera. El
   candidato se registra como fallo con un error que dice cuánto pedía el
   servidor, y se sigue con el resto.
-- Si la salida no valida (o trae tiempos fuera de la ventana, o falla la
+- Si la salida no valida (o trae tiempos fuera de la ventana por más de la
+  tolerancia, o falla la
   llamada por un motivo que no es transitorio, como un 400 o un 403), se repite
   la llamada una vez, con el ritmo de 12 s. Si vuelve a fallar, se registra el
   fallo y se sigue con el resto de candidatos. Este reintento único no se
