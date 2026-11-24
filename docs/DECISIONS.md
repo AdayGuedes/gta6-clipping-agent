@@ -471,6 +471,61 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - Un cambio del modelo por defecto en el código, o una segunda VOD para
     medir el acierto, quedan para el arquitecto.
 
+## D20 · 2026-11-24 · Segunda VOD de validación: línea base cerrada y alcance de la fase 7
+
+- **Datos** (VOD de DjMaRiiO del 22-nov, 10 h 18, 40.490 mensajes; nota de
+  sesión [2026-11-23](sessions/2026-11-23-validacion-djmariio.md)):
+  - Chat distinto al de Rubius: mediana de 49 msg/min y máximo ×13,78 (Rubius:
+    ×1,42).
+  - Arnés sin juez, K=20: Rubius PASS (5/10, azar 1,84, p=0,0325); DjMaRiiO
+    FAIL (4/10, azar 1,49, p=0,1019). En K=40 pasan los dos (p=0,039 y
+    p=0,006).
+  - Línea base local (mediana móvil de ±1.800 s): 1/10 en Rubius y 2/10 en
+    DjMaRiiO, frente a 5/10 y 4/10 de la global. También pierde con ±900 s y
+    ±3.600 s.
+  - Corrida con juez (`gemini-3.5-flash-lite`, K=20): 5 momentos, 0/10 clips y
+    1 fallo de validación sobre 20 candidatos.
+- **Decisión:**
+  1. **Línea base global: se queda.** La pregunta A/B queda cerrada: la local
+     pierde en los dos fixtures y con dos sensibilidades. La segunda VOD
+     existía para responderla.
+  2. **El criterio de aceptación de D15 no se declara ni superado ni fallado.**
+     El FAIL de DjMaRiiO no es fiable: sus 4 aciertos son 2 candidatos, porque
+     3 de los 10 clips de la referencia son el mismo momento y el arnés cuenta
+     aciertos por clip. La barra tampoco se mueve a K=40 a posteriori: que en
+     K=40 pasen los dos es un diagnóstico (el detector tiene señal y falla el
+     orden dentro del top 20), no un criterio nuevo.
+  3. **La saturación de `reaccion_chat` se registra, no se reescala.** Con
+     ×4,1 o más los 20 candidatos puntúan 28-30 de 30. Si todos los candidatos
+     tienen una reacción alta, que empaten cerca de 30 es la rúbrica
+     funcionando: la discriminación pasa a los otros 70 puntos. Reescribir la
+     tabla de D10 con dos VODs sería sobreajuste.
+- **Alcance de la fase 7**, por orden (el instrumento primero, el resto se lee
+  después):
+  1. **El arnés cuenta por momento distinto.** Los clips de referencia
+     solapados o a menos de 60 s se fusionan antes de contar. Se recalculan los
+     dos fixtures y se publican ambas cuentas, por clip y por momento.
+  2. **El juez recorta en lugar de morir por poco.** Un juicio fuera de la
+     ventana del candidato por 2 s o menos (constante con nombre) se recorta a
+     la ventana; más allá de eso sigue fallando.
+  3. **Medición de tormentas, sin tratamiento todavía:** qué parte del top 20
+     ocupa una sola tormenta promocional (sorteos, `!drops`) en cada fixture.
+     El mecanismo de tratamiento (contenido repetido, separación adaptativa,
+     tope por tramo) lo propone la sesión con ese dato delante.
+  4. **Corrida del juez con K=40** sobre el instrumento ya corregido. El 0/10
+     de la corrida con K=20 está contaminado por la referencia duplicada y por
+     una tormenta de sorteo que entra en el top 5.
+- **Higiene:**
+  - Se quita la línea `GEMINI_MODEL=gemini-3.8-flash` del `.env`: fuerza un
+    modelo con 20 peticiones al día y ya obligó a sobrescribirlo a mano. El
+    modelo por defecto del código es el de D19.
+  - La nota de sesión registra la corrección de una cifra propia sobre los
+    clips de 4.781-4.845 s (ver su sección de errores).
+- **Implica:**
+  - No se cambia código en esta decisión: los puntos 1-4 de la fase 7 se
+    implementan en su fase, tras explicar el plan y recibir el OK (D6).
+  - D10 y la tabla de puntos de reacción no cambian.
+
 ## Propuestas
 
 Las propuestas no están numeradas como decisiones: quedan abiertas hasta que el
@@ -498,7 +553,7 @@ arquitecto las resuelva y se registren como D-n.
   - **Línea base local o rodante** en lugar de la mediana global, para
     directos de 8,5 h con fases distintas. No se decide con el fixture de
     Rubius: su referencia está contaminada por fase (D15, F3). No entra en la
-    fase 5.
+    fase 5. **Cerrada por D20:** se queda la global.
   - **Señales complementarias** al volumen, sin pesos ni léxicos fijados hasta
     que lo confirme más de una VOD:
     - Usuarios únicos por minuto. Exige un campo `user` en `ChatEvent`, que
@@ -515,6 +570,7 @@ arquitecto las resuelva y se registren como D-n.
   - **Segunda VOD de validación**, de otro tipo de streamer (chat pequeño, no
     un mega-directo), para comprobar que el detector generaliza y para decidir
     la línea base. Hay que descargarla, así que necesita el OK del arquitecto.
+    **Hecha** (DjMaRiiO, 2026-11-23); resultado en D20.
 - **Fixture:** el dataset de Rubius (`chat.json`, `transcript.json` y
   `reference.json` en `~/rubius-run`, fuera del repo) queda como fixture. La
   primera corrida de la fase 5 con el detector revisado se hace sobre estos

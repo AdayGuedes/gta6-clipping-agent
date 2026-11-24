@@ -45,3 +45,9 @@ fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
       corrida de cierre juzgó los 19 candidatos con transcripción en 229 s, sin
       errores, y el CLI evaluó 2/10 clips de referencia con 5 momentos
       ([nota](docs/sessions/2026-11-21-fase-6.md))
+- [x] Medición con una segunda VOD (DjMaRiiO, 22-nov, 2026-11-23): la línea
+      base global se queda (la local pierde en las dos VODs); en K=20 sin juez
+      Rubius da PASS y DjMaRiiO FAIL no fiable (4 aciertos son 2 momentos, el
+      arnés cuenta por clip); con juez, 0/10 clips y 1 fallo de validación.
+      Decidido en D20, que aprueba el alcance de la fase 7
+      ([nota](docs/sessions/2026-11-23-validacion-djmariio.md))
