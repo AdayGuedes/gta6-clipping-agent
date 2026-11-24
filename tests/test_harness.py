@@ -726,6 +726,68 @@ def test_run_without_repeated_clips_gives_the_same_count_in_both_tables(tmp_path
     assert table_rows(lines) == table_rows(lines, "By clip:")
 
 
+def storm_rows(lines):
+    pattern = re.compile(r"^\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(.+)$")
+    start = next(i for i, line in enumerate(lines) if line.startswith("Storms ("))
+    return [m.groups() for line in lines[start + 2 :] if (m := pattern.match(line))]
+
+
+def test_run_prints_the_storm_section_between_the_tables_and_the_verdict(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    title = next(i for i, line in enumerate(lines) if line.startswith("Storms ("))
+
+    assert lines.index("By moment:") < title < len(lines) - 1
+    assert lines[title] == (
+        "Storms (peak windows with at most 35% distinct messages; flagged "
+        "peaks up to 300 s apart form one storm):"
+    )
+    assert lines[title + 1] == "    K  flagged  largest storm  share  dominant message"
+
+
+def test_run_prints_one_storm_row_per_k(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    assert [row[0] for row in storm_rows(lines)] == ["3", "5", "10", "20", "40"]
+
+
+def test_run_storm_rows_measure_the_peaks_of_each_k(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    first = storm_rows(lines)[0]
+
+    assert first == ("3", "3", "1", "33", "x")
+
+
+def test_run_does_not_repeat_the_configured_k_in_the_storm_section(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS, config=DetectorConfig(top_k=10))
+
+    assert [row[0] for row in storm_rows(lines)] == ["5", "10", "20", "40"]
+
+
+def test_run_storm_section_shows_a_dash_when_there_is_no_storm(tmp_path, monkeypatch):
+    varied = [
+        ChatEvent(t_s=float(t), message=f"m{t}-{i}")
+        for t in range(0, 6000, 5)
+        for i in range(1)
+    ]
+    for second, count in ((1000, 48), (3000, 36), (5000, 24)):
+        varied += [
+            ChatEvent(t_s=float(second), message=f"u{second}-{i}") for i in range(count)
+        ]
+    chat = tmp_path / "varied.json"
+    chat.write_text(
+        json.dumps([{"t_s": e.t_s, "message": e.message} for e in varied]),
+        encoding="utf-8",
+    )
+    stream = io.StringIO()
+
+    run(chat, write_reference(tmp_path, NEAR_PEAKS), PEAK_CONFIG, TRIALS, SEED, stream)
+
+    first = storm_rows(stream.getvalue().splitlines())[0]
+    assert first == ("3", "0", "0", "0", "-")
+
+
 def test_run_writes_only_to_the_given_stream(tmp_path, capsys):
     run_to_lines(tmp_path, NEAR_PEAKS)
 

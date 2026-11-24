@@ -19,8 +19,10 @@ from src.peaks import (
     count_messages_per_second,
     generate_candidates,
     is_separated,
+    select_peaks,
     window_sums,
 )
+from src.storms import DISTINCT_SHARE_MAX, STORM_GAP_S, measure_storms
 
 EXIT_OK = 0
 EXIT_FATAL = 1
@@ -148,6 +150,25 @@ def _table(title: str, results: dict[int, KResult], total: int) -> list[str]:
     return lines
 
 
+def _storm_table(
+    events: Sequence[ChatEvent], sums: list[int], config: DetectorConfig, ks: list[int]
+) -> list[str]:
+    title = (
+        f"Storms (peak windows with at most {DISTINCT_SHARE_MAX:.0%} distinct "
+        f"messages; flagged peaks up to {STORM_GAP_S} s apart form one storm):"
+    )
+    lines = [title, "    K  flagged  largest storm  share  dominant message"]
+    for k in ks:
+        peaks = select_peaks(sums, k, config.min_separation_s)
+        report = measure_storms(events, peaks, config.window_s)
+        dominant = "-" if report.largest is None else report.largest.top_message[:30]
+        lines.append(
+            f"  {k:>3}  {report.flagged:>7}  {report.largest_size:>13}  "
+            f"{report.share:>5.0%}  {dominant}"
+        )
+    return lines
+
+
 def run(
     chat_path: Path,
     reference_path: Path,
@@ -160,7 +181,8 @@ def run(
     events = load_chat(chat_path)
     reference = load_reference(reference_path)
     moments = merge_reference(reference)
-    positions = len(window_sums(count_messages_per_second(events), config.window_s))
+    sums = window_sums(count_messages_per_second(events), config.window_s)
+    positions = len(sums)
 
     by_clip = evaluate_all(events, reference, config, positions, trials, seed)
     by_moment = evaluate_all(events, moments, config, positions, trials, seed)
@@ -183,6 +205,7 @@ def run(
         f"Random baseline: {trials} trials, seed {seed}",
         *_table("By clip:", by_clip, len(reference)),
         *_table("By moment:", by_moment, len(moments)),
+        *_storm_table(events, sums, config, list(by_moment)),
     ]
     verdict = by_moment[config.top_k]
     ok = passes(verdict)
