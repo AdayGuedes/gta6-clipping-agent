@@ -124,9 +124,12 @@ python -m src.harness --chat examples/demo/chat.json --reference examples/demo/r
 
 Informa de aciertos@K para K = 5, 10, 20 y 40 sobre los candidatos del detector
 (no sobre los momentos del juez), y también de `--k` si no está en esa lista.
-Compara con un azar con p-valor por permutación, que sortea los inicios con la
-misma separación mínima que el detector (120 s), y da un veredicto PASS/FAIL
-según el criterio de D15. Opciones: `--window-s` (60), `--k` (20), `--trials`
+Da dos cuentas: por clip de referencia y por momento distinto (los clips que se
+solapan o distan menos de 60 s cuentan como uno). Compara con un azar con
+p-valor por permutación, que sortea los inicios con la misma separación mínima
+que el detector (120 s), y da un veredicto PASS/FAIL según el criterio de D15,
+contado por momento. Añade una sección `Storms` que mide cuánto del top K ocupa
+una sola tormenta de mensajes repetidos; solo mide, no filtra nada. Opciones: `--window-s` (60), `--k` (20), `--trials`
 (2000, mínimo 20) y `--seed` (0). Sale con `0` también con FAIL, `1` si un
 fichero no existe o no es válido (una referencia sin clips incluida), si el chat
 no tiene actividad suficiente o si dura más de 48 h, `2` si los argumentos son

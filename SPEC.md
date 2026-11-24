@@ -198,7 +198,10 @@ a igualdad, por inicio ascendente.
 - Recibe SOLO los candidatos de la fase 2, cada uno con su trozo de
   transcripción. Nunca recibe el VOD entero.
 - Ajusta `inicio`/`fin` fino dentro de la ventana candidata. No puede
-  devolver timestamps fuera de ella.
+  devolver timestamps fuera de ella, con una tolerancia (D20): un tiempo que se
+  sale de la ventana por 2 s o menos (`OUT_OF_WINDOW_TOLERANCE_S`) se recorta
+  al borde de la ventana, sin reintento; más allá de 2 s, o si tras recortar no
+  queda un tramo con duración, el juicio es inválido.
 - Puntúa contexto, novedad y gancho según la rúbrica, asigna una categoría de
   la lista cerrada y escribe el gancho en el idioma dominante de la
   transcripción (español o inglés).
@@ -219,9 +222,9 @@ a igualdad, por inicio ascendente.
   (`MAX_RETRY_DELAY_S`; por ejemplo, un 429 de cuota diaria), no se espera. El
   candidato se registra como fallo con un error que dice cuánto pedía el
   servidor, y se sigue con el resto.
-- Si la salida no valida (o trae tiempos fuera de la ventana, o falla la
-  llamada por un motivo que no es transitorio, como un 400 o un 403), se repite
-  la llamada una vez, con el ritmo de 12 s. Si vuelve a fallar, se registra el
+- Si la salida no valida (o trae tiempos fuera de la ventana por más de la
+  tolerancia, o falla la llamada por un motivo que no es transitorio, como un
+  400 o un 403), se repite la llamada una vez, con el ritmo de 12 s. Si vuelve a fallar, se registra el
   fallo y se sigue con el resto de candidatos. Este reintento único no se
   aplica cuando el juez ya agotó los intentos transitorios.
 - Puntuación total = `reaccion_chat` (ya calculada por código) + las tres
@@ -254,15 +257,23 @@ python -m src.harness --chat <fichero> --reference <fichero> [--window-s 60] [--
 
 Mide los candidatos del detector, no los momentos del juez, y no usa juez ni
 red. Para K = 5, 10, 20 y 40 informa de cuántos clips de referencia solapa algún
-candidato, con la tolerancia de la sección 10 (±60 s, extremos incluidos). Si
-`--k` no está en esa lista, se informa también de su fila. Lo compara con la
-media de un azar de `--trials` pruebas con la semilla `--seed` y da un
-p-valor por permutación. El azar sortea los inicios de ventana con la misma
-separación mínima que el detector (120 s), así que compara con la misma
-selección que se mide. El veredicto (D15) es PASS si aciertos@K para `--k` (20
-por defecto) supera al azar con p<0,05 y el detector da candidatos; si no, FAIL.
-Un FAIL sale también con código 0: el veredicto va en la salida, no en el código
-de salida.
+candidato (tabla `By clip`) y de cuántos momentos distintos (tabla `By moment`),
+con la tolerancia de la sección 10 (±60 s, extremos incluidos). Un momento
+distinto es un clip de referencia, o varios fusionados si se solapan o distan
+menos de 60 s entre sí (D20). Si `--k` no está en esa lista, se informa también
+de su fila. Cada tabla se compara con la media de un azar de `--trials` pruebas
+con la semilla `--seed` y da un p-valor por permutación. El azar sortea los
+inicios de ventana con la misma separación mínima que el detector (120 s), así
+que compara con la misma selección que se mide. El veredicto (D15, contado por
+momento desde D20) es PASS si aciertos@K para `--k` (20 por defecto) supera al
+azar con p<0,05 y el detector da candidatos; si no, FAIL. Un FAIL sale también
+con código 0: el veredicto va en la salida, no en el código de salida.
+
+Una tercera sección, `Storms` (D20), solo mide: para cada K cuenta los picos
+cuya ventana de 60 s tiene como mucho un 35 % de mensajes distintos (tras
+normalizar mayúsculas, espacios y caracteres invisibles), agrupa los picos así
+marcados que distan 300 s o menos en una tormenta, y da el tamaño de la mayor,
+su parte del top K y su mensaje dominante. No filtra ni puntúa nada.
 
 Códigos de salida: 0 si corre, 1 si un fichero no existe o no es válido (una
 referencia sin ningún clip también es un error de carga: «reference has no

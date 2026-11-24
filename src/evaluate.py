@@ -6,6 +6,7 @@ from src.models import Moment, ReferenceClip
 from src.timeparse import hhmmss_to_seconds, seconds_to_hhmmss
 
 TOLERANCE_S = 60
+MOMENT_GAP_S = 60
 
 
 class ClipResult(BaseModel):
@@ -25,6 +26,19 @@ class EvaluationReport(BaseModel):
 
 def window_matches(start_s: float, end_s: float, clip: ReferenceClip) -> bool:
     return start_s <= clip.end_s + TOLERANCE_S and end_s >= clip.start_s - TOLERANCE_S
+
+
+def merge_reference(reference: Sequence[ReferenceClip]) -> list[ReferenceClip]:
+    merged: list[ReferenceClip] = []
+    for clip in sorted(reference, key=lambda c: (c.start_s, c.end_s)):
+        if merged and clip.start_s - merged[-1].end_s < MOMENT_GAP_S:
+            last = merged[-1]
+            merged[-1] = ReferenceClip(
+                start_s=last.start_s, end_s=max(last.end_s, clip.end_s)
+            )
+        else:
+            merged.append(clip)
+    return merged
 
 
 def _matches(moment: Moment, clip: ReferenceClip) -> bool:

@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TextIO
 
-from src.evaluate import TOLERANCE_S, window_matches
+from src.evaluate import MOMENT_GAP_S, TOLERANCE_S, merge_reference, window_matches
 from src.loaders import LoadError, load_chat, load_reference
 from src.models import ChatEvent, ReferenceClip
 from src.peaks import (
@@ -19,8 +19,10 @@ from src.peaks import (
     count_messages_per_second,
     generate_candidates,
     is_separated,
+    select_peaks,
     window_sums,
 )
+from src.storms import DISTINCT_SHARE_MAX, STORM_GAP_S, measure_storms
 
 EXIT_OK = 0
 EXIT_FATAL = 1
@@ -120,6 +122,53 @@ def passes(result: KResult) -> bool:
     return result.candidates > 0 and result.p_value < SIGNIFICANCE
 
 
+def evaluate_all(
+    events: Sequence[ChatEvent],
+    reference: Sequence[ReferenceClip],
+    config: DetectorConfig,
+    positions: int,
+    trials: int,
+    seed: int,
+) -> dict[int, KResult]:
+    ks = sorted({*REPORTED_K, config.top_k})
+    return {
+        k: evaluate_k(
+            events, reference, replace(config, top_k=k), positions, trials, seed
+        )
+        for k in ks
+    }
+
+
+def _table(title: str, results: dict[int, KResult], total: int) -> list[str]:
+    lines = [title, "    K  candidates  hits  random mean  p-value"]
+    for result in results.values():
+        lines.append(
+            f"  {result.k:>3}  {result.candidates:>10}  "
+            f"{result.hits:>2}/{total:<2} {result.random_mean:>11.2f}  "
+            f"{result.p_value:>7.4f}"
+        )
+    return lines
+
+
+def _storm_table(
+    events: Sequence[ChatEvent], sums: list[int], config: DetectorConfig, ks: list[int]
+) -> list[str]:
+    title = (
+        f"Storms (peak windows with at most {DISTINCT_SHARE_MAX:.0%} distinct "
+        f"messages; flagged peaks up to {STORM_GAP_S} s apart form one storm):"
+    )
+    lines = [title, "    K  flagged  largest storm  share  dominant message"]
+    for k in ks:
+        peaks = select_peaks(sums, k, config.min_separation_s)
+        report = measure_storms(events, peaks, config.window_s)
+        dominant = "-" if report.largest is None else report.largest.top_message[:30]
+        lines.append(
+            f"  {k:>3}  {report.flagged:>7}  {report.largest_size:>13}  "
+            f"{report.share:>5.0%}  {dominant}"
+        )
+    return lines
+
+
 def run(
     chat_path: Path,
     reference_path: Path,
@@ -131,15 +180,12 @@ def run(
     stream = sys.stdout if stream is None else stream
     events = load_chat(chat_path)
     reference = load_reference(reference_path)
-    positions = len(window_sums(count_messages_per_second(events), config.window_s))
+    moments = merge_reference(reference)
+    sums = window_sums(count_messages_per_second(events), config.window_s)
+    positions = len(sums)
 
-    ks = sorted({*REPORTED_K, config.top_k})
-    results = {
-        k: evaluate_k(
-            events, reference, replace(config, top_k=k), positions, trials, seed
-        )
-        for k in ks
-    }
+    by_clip = evaluate_all(events, reference, config, positions, trials, seed)
+    by_moment = evaluate_all(events, moments, config, positions, trials, seed)
 
     config_line = (
         f"Config: window {config.window_s} s, "
@@ -147,24 +193,26 @@ def run(
         f"min separation {config.min_separation_s} s, lead {config.lead_s} s, "
         f"tail {config.tail_s} s"
     )
+    moments_line = (
+        f"Reference moments: {len(moments)} "
+        f"(clips less than {MOMENT_GAP_S} s apart merged)"
+    )
     lines = [
         f"Chat: {len(events)} messages, {positions} window positions",
         f"Reference clips: {len(reference)} (tolerance +/-{TOLERANCE_S} s)",
+        moments_line,
         config_line,
         f"Random baseline: {trials} trials, seed {seed}",
-        "    K  candidates  hits  random mean  p-value",
+        *_table("By clip:", by_clip, len(reference)),
+        *_table("By moment:", by_moment, len(moments)),
+        *_storm_table(events, sums, config, list(by_moment)),
     ]
-    for result in results.values():
-        lines.append(
-            f"  {result.k:>3}  {result.candidates:>10}  "
-            f"{result.hits:>2}/{len(reference):<2} {result.random_mean:>11.2f}  "
-            f"{result.p_value:>7.4f}"
-        )
-    verdict = results[config.top_k]
+    verdict = by_moment[config.top_k]
     ok = passes(verdict)
     lines.append(
-        f"Verdict (hits@{verdict.k} above random with p<{SIGNIFICANCE}, never "
-        f"silent): {'PASS' if ok else 'FAIL'} - hits {verdict.hits}/{len(reference)}, "
+        f"Verdict (hits@{verdict.k} above random with p<{SIGNIFICANCE}, counted by "
+        f"moment, never silent): {'PASS' if ok else 'FAIL'} - "
+        f"hits {verdict.hits}/{len(moments)}, "
         f"random mean {verdict.random_mean:.2f}, p={verdict.p_value:.4f}, "
         f"candidates {verdict.candidates}"
     )

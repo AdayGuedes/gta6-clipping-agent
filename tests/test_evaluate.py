@@ -2,11 +2,13 @@ import pytest
 
 import src.judge as judge_module
 from src.evaluate import (
+    MOMENT_GAP_S,
     TOLERANCE_S,
     ClipResult,
     EvaluationReport,
     evaluate,
     format_report,
+    merge_reference,
     window_matches,
 )
 from src.models import Breakdown, Chat, Moment, ReferenceClip
@@ -240,3 +242,75 @@ def test_evaluate_routes_the_criterion_through_window_matches(monkeypatch):
 
     assert detected == [True]
     assert calls == [(3000, 3040, make_clip())]
+
+
+def merged(pairs):
+    return [
+        (clip.start_s, clip.end_s)
+        for clip in merge_reference([make_clip(s, e) for s, e in pairs])
+    ]
+
+
+def test_moment_gap_is_sixty_seconds():
+    assert MOMENT_GAP_S == 60
+
+
+def test_merge_reference_keeps_clips_that_are_far_apart():
+    assert merged([(100, 130), (500, 530)]) == [(100, 130), (500, 530)]
+
+
+def test_merge_reference_fuses_overlapping_clips():
+    assert merged([(100, 130), (120, 160)]) == [(100, 160)]
+
+
+def test_merge_reference_fuses_a_clip_contained_in_another():
+    assert merged([(100, 300), (150, 160)]) == [(100, 300)]
+
+
+def test_merge_reference_fuses_clips_less_than_sixty_seconds_apart():
+    assert merged([(100, 130), (189, 220)]) == [(100, 220)]
+
+
+def test_merge_reference_keeps_clips_exactly_sixty_seconds_apart():
+    assert merged([(100, 130), (190, 220)]) == [(100, 130), (190, 220)]
+
+
+def test_merge_reference_chains_fusions_through_a_middle_clip():
+    assert merged([(100, 130), (150, 180), (200, 230)]) == [(100, 230)]
+
+
+def test_merge_reference_is_independent_of_the_input_order():
+    pairs = [(500, 530), (100, 130), (120, 160)]
+
+    assert merged(pairs) == merged(list(reversed(pairs))) == [(100, 160), (500, 530)]
+
+
+def test_merge_reference_of_nothing_is_nothing():
+    assert merge_reference([]) == []
+
+
+def test_merge_reference_returns_reference_clips_and_leaves_the_input_alone():
+    reference = [make_clip(120, 160), make_clip(100, 130)]
+
+    result = merge_reference(reference)
+
+    assert all(isinstance(clip, ReferenceClip) for clip in result)
+    assert [(c.start_s, c.end_s) for c in reference] == [(120, 160), (100, 130)]
+
+
+def test_merge_reference_collapses_the_djmariio_triplet_into_one_moment():
+    triplet = [(4785, 4815), (4781, 4796), (4815, 4845), (8874, 8929)]
+
+    assert merged(triplet) == [(4781, 4845), (8874, 8929)]
+
+
+def test_fusing_the_reference_never_changes_which_windows_hit():
+    pairs = [(100, 130), (189, 220), (900, 930)]
+    reference = [make_clip(s, e) for s, e in pairs]
+    fused = merge_reference(reference)
+
+    for start in range(0, 1100, 7):
+        window = (start, start + 20)
+        assert any(window_matches(*window, c) for c in reference) == any(
+            window_matches(*window, c) for c in fused
+        )

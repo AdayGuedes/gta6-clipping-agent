@@ -525,6 +525,9 @@ propuestas que salen del alcance de la SPEC se registran abajo, en
   - No se cambia código en esta decisión: los puntos 1-4 de la fase 7 se
     implementan en su fase, tras explicar el plan y recibir el OK (D6).
   - D10 y la tabla de puntos de reacción no cambian.
+  - **Ejecutado en la fase 7** ([nota](sessions/2026-11-24-fase-7.md)): los
+    cuatro puntos del alcance, en ese orden. Lo que queda abierto está en
+    «Resultados de la fase 7» de Propuestas.
 
 ## Propuestas
 
@@ -576,3 +579,43 @@ arquitecto las resuelva y se registren como D-n.
   primera corrida de la fase 5 con el detector revisado se hace sobre estos
   mismos datos, sin descargar nada, y ahí se cierra también la validación del
   juez (D15).
+
+### Resultados de la fase 7 y lo que queda por decidir (2026-11-24)
+
+- **Estado:** abierta, a la espera del arquitecto. Cifras en la nota de la
+  [fase 7](sessions/2026-11-24-fase-7.md). No se ha cambiado código para ninguna.
+- **Datos:**
+  - Arnés por momento en K=20: Rubius PASS (5/9, p=0,0165) y DjMaRiiO FAIL (2/8,
+    p=0,3618). En K=40 pasan los dos.
+  - Una sola tormenta de `!rested` ocupa el 100 % del top 5, el 50 % del top 10
+    y el 25 % del top 20 de DjMaRiiO, y nada de Rubius. Quitarla (un pico por
+    tormenta o descartar los marcados) no cambia aciertos@20 (2/8) y suma 1 en
+    K=10.
+  - Juez a K=40: sin evidencia de que ordene mejor que el detector ni que el
+    azar (AUC total 0,54 en DjMaRiiO y 0,64 en Rubius, p>0,1; 8 candidatos que
+    aciertan por fixture).
+- **Propuestas, por orden de prioridad:**
+  1. **Más potencia antes de decidir sobre el juez.** Con 8 candidatos que
+     aciertan por VOD no se puede detectar un efecto moderado. Ampliar la
+     referencia de los dos VODs que ya están descargados de 10 a unos 30 clips
+     no cuesta descargas ni cuota del juez (los juicios de K=40 ya están
+     guardados), solo consultas de metadatos de clips. Cuántos clips de cada VOD
+     existen en realidad hay que comprobarlo: la lista de 7 días de DjMaRiiO
+     tenía 522 clips, de varios directos. Con eso se repetiría el AUC y el
+     arnés sin tocar nada más.
+  2. **Declarar el criterio de D15.** Por momento en K=20 es 1 PASS y 1 FAIL. Lo
+     decide el arquitecto: aceptarlo como «pasa en 1 de 2 fixtures» y decidir si
+     eso basta, o esperar a la referencia ampliada del punto 1. Mover la barra a
+     K=40 sería una barra nueva (D20, punto 2).
+  3. **Evaluar el CLI por momento distinto y a nivel de candidato.** El ajuste
+     fino de ventana del juez cuesta aciertos (Rubius: 3/9 de candidatos, 2/9 de
+     momentos del CLI) y la evaluación del CLI sigue contando por clip. Cambio
+     pequeño en `src/evaluate.py` y `src/main.py`.
+  4. **Opción `--k` en el CLI.** La corrida a K=40 se hizo con un script
+     desechable porque `src.main` fija K=20 (`generate_candidates` sin
+     configuración).
+  5. **Tormentas: no tratar todavía.** El dato dice que la tormenta ocupa
+     huecos pero no es la causa del FAIL de DjMaRiiO en K=20. Si se quiere
+     igualmente, la regla de menor coste medida es un pico por tormenta, con el
+     mismo criterio de repetición que ya mide el arnés; sería un cambio de
+     `generate_candidates` y de la SPEC §7.

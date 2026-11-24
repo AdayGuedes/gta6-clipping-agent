@@ -25,8 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add 12 s call pacing and transient-error retries to the Gemini judge (D16, D18)
 - Recommend gemini-3.5-flash-lite for the judge on the free tier and record D19
 - Make gemini-3.5-flash-lite the default judge model, replacing gemini-3.8-flash
+- Record decision D20 and the phase 7 note with the second VOD and the K=40 judge run
+- Count harness hits by distinct reference moment and print both tables (D20)
+- Clamp judge timestamps that leave the candidate window by 2 s or less (D20)
+- Measure repeated-message storms in the harness output without filtering them (D20)
 
 ### Changed
 
 - Resolve SPEC open questions and record decision D5
 - Rename MERGE_GAP_S to MIN_PEAK_SEPARATION_S, with no change in behaviour
+- Count the harness verdict by moment instead of by clip (D20)

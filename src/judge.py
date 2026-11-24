@@ -33,6 +33,7 @@ MIN_CALL_INTERVAL_S = 12.0
 MAX_TRANSIENT_ATTEMPTS = 3
 TRANSIENT_BACKOFF_S = (15.0, 30.0)
 MAX_RETRY_DELAY_S = 300.0
+OUT_OF_WINDOW_TOLERANCE_S = 2.0
 RATE_LIMITED = "429"
 UNAVAILABLE = "503"
 NETWORK_ERROR = "network"
@@ -268,12 +269,27 @@ def round_half_up(value: float) -> int:
     return math.floor(value + 0.5)
 
 
-def _moment_from_judgment(candidate: Candidate, judgment: Judgment) -> Moment:
-    if judgment.start_s < candidate.start_s or judgment.end_s > candidate.end_s:
+def _clamp_to_window(candidate: Candidate, judgment: Judgment) -> tuple[float, float]:
+    low = candidate.start_s - OUT_OF_WINDOW_TOLERANCE_S
+    high = candidate.end_s + OUT_OF_WINDOW_TOLERANCE_S
+    if judgment.start_s < low or judgment.end_s > high:
         raise ValueError(
             f"judgment {judgment.start_s}-{judgment.end_s} s is outside the "
-            f"candidate window {candidate.start_s}-{candidate.end_s} s"
+            f"candidate window {candidate.start_s}-{candidate.end_s} s by more "
+            f"than {OUT_OF_WINDOW_TOLERANCE_S:g} s"
         )
+    start_s = min(max(judgment.start_s, candidate.start_s), candidate.end_s)
+    end_s = min(max(judgment.end_s, candidate.start_s), candidate.end_s)
+    if end_s <= start_s:
+        raise ValueError(
+            f"judgment {judgment.start_s}-{judgment.end_s} s has no part inside "
+            f"the candidate window {candidate.start_s}-{candidate.end_s} s"
+        )
+    return start_s, end_s
+
+
+def _moment_from_judgment(candidate: Candidate, judgment: Judgment) -> Moment:
+    start_s, end_s = _clamp_to_window(candidate, judgment)
     breakdown = Breakdown(
         reaccion_chat=round_half_up(candidate.reaction_points),
         contexto=judgment.context_score,
@@ -281,8 +297,8 @@ def _moment_from_judgment(candidate: Candidate, judgment: Judgment) -> Moment:
         gancho=judgment.hook_score,
     )
     return Moment(
-        inicio=seconds_to_hhmmss(judgment.start_s),
-        fin=seconds_to_hhmmss(judgment.end_s),
+        inicio=seconds_to_hhmmss(start_s),
+        fin=seconds_to_hhmmss(end_s),
         puntuacion=breakdown.total,
         desglose=breakdown,
         categoria=judgment.category,
