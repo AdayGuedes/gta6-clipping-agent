@@ -1,12 +1,13 @@
 # PROGRESS
 
-**Fase actual:** v1 abierta, fase 6 en PR. El v0 está cerrado: la prueba con un VOD real de
+**Fase actual:** v1 abierta, fase 7 (instrumento de medición y corrida del juez
+a K=40, alcance en [D20](docs/DECISIONS.md)). Las fases 5 y 6 están fusionadas y
+cerradas (PR #7 y #8). El v0 está cerrado: la prueba con un VOD real de
 8:34:30 ([nota de la fase 4](docs/sessions/2026-11-19-fase-4.md)) dio 0
 candidatos y 0/10 clips de referencia, porque el chat de ese directo es
-demasiado plano para el umbral ×1,5 (máximo ×1,31). El detector queda decidido
-en [D15](docs/DECISIONS.md). La fase 5 (ventana deslizante y top-K, con arnés
-de evaluación) está implementada y en PR; falta validar el juez real sobre el
-fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
+demasiado plano para el umbral ×1,5 (máximo ×1,31). El detector (ventana
+deslizante de 60 s, top-K y línea base global) queda decidido en
+[D15](docs/DECISIONS.md) y D20.
 
 ## Fases v0
 
@@ -27,19 +28,19 @@ fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
 
 ## Fases v1
 
-- [ ] Fase 5 detector revisado (D15)
+- [x] Fase 5 detector revisado (D15), fusionada (PR #7)
       - [x] Ventana deslizante de 60 s, selección top-K con supresión de
         no-máximos, `DetectorConfig`, arnés de evaluación sin juez y tests
         (605 en verde). El arnés da PASS sobre el fixture de Rubius: 5/10 en
         K=20 frente a 1,84 del azar, p=0,0325
         ([nota](docs/sessions/2026-11-20-fase-5.md))
-      - [ ] Primera corrida del juez real sobre el fixture (2026-11-20): 0 de
+      - [x] Primera corrida del juez real sobre el fixture (2026-11-20): 0 de
         20 candidatos (12 × 429 por el límite de 5 peticiones por minuto del
         tier gratuito, 7 × 503, 1 sin transcripción). Resuelto por D16 y la
         fase 6.
-- [ ] Fase 6 resiliencia del juez (D16, D18): pacing de 12 s, reintentos de
-      errores transitorios con tope al `retryDelay` y `judge_candidates` sin
-      reintento tras agotar transitorios. Implementada y en PR (653 tests en
+- [x] Fase 6 resiliencia del juez (D16, D18), fusionada (PR #8): pacing de
+      12 s, reintentos de errores transitorios con tope al `retryDelay` y
+      `judge_candidates` sin reintento tras agotar transitorios (653 tests en
       verde). Con `gemini-3.8-flash` la cuota diaria (20 peticiones) se agotó
       tras 5 de 20 candidatos; con `gemini-3.5-flash-lite` (500/día, D19) la
       corrida de cierre juzgó los 19 candidatos con transcripción en 229 s, sin
@@ -51,3 +52,10 @@ fixture, bloqueado por el límite de 5 peticiones por minuto del tier gratuito.
       arnés cuenta por clip); con juez, 0/10 clips y 1 fallo de validación.
       Decidido en D20, que aprueba el alcance de la fase 7
       ([nota](docs/sessions/2026-11-23-validacion-djmariio.md))
+- [ ] Fase 7 instrumento y lectura del juez (D20), en este orden:
+      - [ ] Arnés por momento distinto (clips solapados o a menos de 60 s se
+        fusionan) y recálculo de los dos fixtures con ambas cuentas
+      - [ ] Recorte del juez con tolerancia de 2 s fuera de ventana
+      - [ ] Medición de la ocupación del top 20 por tormentas promocionales,
+        sin tratamiento
+      - [ ] Corrida del juez a K=40 con el instrumento corregido
