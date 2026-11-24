@@ -10,6 +10,7 @@ import pytest
 import src.evaluate as evaluate_module
 import src.harness as harness_module
 import src.judge as judge_module
+from src.evaluate import merge_reference
 from src.harness import (
     EXIT_FATAL,
     EXIT_INTERRUPTED,
@@ -105,11 +106,18 @@ def cli_args(tmp_path, pairs=NEAR_PEAKS, **overrides):
     ]
 
 
-def table_rows(lines):
+def table_rows(lines, title="By moment:"):
     pattern = re.compile(
         r"^\s+(\d+)\s+(\d+)\s+(\d+)/(\d+)\s+(\d+\.\d\d)\s+(\d\.\d{4})$"
     )
-    return [match.groups() for line in lines if (match := pattern.match(line))]
+    rows = []
+    in_table = False
+    for line in lines:
+        if line.endswith(":") and not line.startswith(" "):
+            in_table = line == title
+        elif in_table and (match := pattern.match(line)):
+            rows.append(match.groups())
+    return rows
 
 
 def test_count_hits_counts_each_clip_once():
@@ -572,13 +580,16 @@ def run_to_lines(tmp_path, pairs, config=PEAK_CONFIG, trials=TRIALS, seed=SEED):
 def test_run_prints_the_header_lines(tmp_path):
     _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
 
-    assert lines[:5] == [
+    assert lines[:7] == [
         "Chat: 1308 messages, 5937 window positions",
         "Reference clips: 3 (tolerance +/-60 s)",
+        "Reference moments: 3 (clips less than 60 s apart merged)",
         CONFIG_LINE,
         "Random baseline: 200 trials, seed 1",
+        "By clip:",
         "    K  candidates  hits  random mean  p-value",
     ]
+    assert "By moment:" in lines
 
 
 def test_run_prints_one_row_per_reported_k_plus_the_configured_k(tmp_path):
@@ -602,7 +613,7 @@ def test_run_row_for_the_configured_k_matches_evaluate_k(tmp_path):
 
     result = evaluate_planted(NEAR_PEAKS)
 
-    assert table_rows(lines)[0] == (
+    expected = (
         "3",
         str(result.candidates),
         str(result.hits),
@@ -610,6 +621,8 @@ def test_run_row_for_the_configured_k_matches_evaluate_k(tmp_path):
         f"{result.random_mean:.2f}",
         f"{result.p_value:.4f}",
     )
+    assert table_rows(lines)[0] == expected
+    assert table_rows(lines, "By clip:")[0] == expected
 
 
 def test_run_returns_true_and_prints_a_pass_verdict_for_a_reference_on_the_peaks(
@@ -620,7 +633,7 @@ def test_run_returns_true_and_prints_a_pass_verdict_for_a_reference_on_the_peaks
     result = evaluate_planted(NEAR_PEAKS)
     assert ok is True
     assert lines[-1] == (
-        "Verdict (hits@3 above random with p<0.05, never silent): PASS - "
+        "Verdict (hits@3 above random with p<0.05, counted by moment, never silent): PASS - "
         f"hits 3/3, random mean {result.random_mean:.2f}, "
         f"p={result.p_value:.4f}, candidates 3"
     )
@@ -632,7 +645,7 @@ def test_run_returns_false_and_prints_a_fail_verdict_far_from_the_peaks(tmp_path
     result = evaluate_planted(FAR_FROM_PEAKS)
     assert ok is False
     assert lines[-1] == (
-        "Verdict (hits@3 above random with p<0.05, never silent): FAIL - "
+        "Verdict (hits@3 above random with p<0.05, counted by moment, never silent): FAIL - "
         f"hits 0/3, random mean {result.random_mean:.2f}, "
         f"p=1.0000, candidates 3"
     )
@@ -643,6 +656,74 @@ def test_run_verdict_is_the_last_line_and_names_the_configured_k(tmp_path):
 
     assert lines[-1].startswith("Verdict (hits@20 above random with p<0.05")
     assert sum(line.startswith("Verdict") for line in lines) == 1
+
+
+DUPLICATED_FIRST_PEAK = [(1000, 1030), (1010, 1040), (1040, 1070), (3000, 3030)]
+
+
+def test_run_counts_a_repeated_moment_once_in_the_moment_table(tmp_path):
+    _, lines = run_to_lines(tmp_path, DUPLICATED_FIRST_PEAK)
+
+    assert lines[2] == "Reference moments: 2 (clips less than 60 s apart merged)"
+    assert table_rows(lines, "By clip:")[0][2:4] == ("4", "4")
+    assert table_rows(lines)[0][2:4] == ("2", "2")
+
+
+def test_run_by_clip_table_matches_evaluate_k_on_the_raw_reference(tmp_path):
+    _, lines = run_to_lines(tmp_path, DUPLICATED_FIRST_PEAK)
+
+    result = evaluate_k(
+        planted_chat_events(),
+        clips(DUPLICATED_FIRST_PEAK),
+        PEAK_CONFIG,
+        POSITIONS,
+        TRIALS,
+        SEED,
+    )
+
+    assert table_rows(lines, "By clip:")[0] == (
+        "3",
+        str(result.candidates),
+        str(result.hits),
+        "4",
+        f"{result.random_mean:.2f}",
+        f"{result.p_value:.4f}",
+    )
+
+
+def test_run_by_moment_table_matches_evaluate_k_on_the_fused_reference(tmp_path):
+    _, lines = run_to_lines(tmp_path, DUPLICATED_FIRST_PEAK)
+
+    result = evaluate_k(
+        planted_chat_events(),
+        merge_reference(clips(DUPLICATED_FIRST_PEAK)),
+        PEAK_CONFIG,
+        POSITIONS,
+        TRIALS,
+        SEED,
+    )
+
+    assert table_rows(lines)[0] == (
+        "3",
+        str(result.candidates),
+        str(result.hits),
+        "2",
+        f"{result.random_mean:.2f}",
+        f"{result.p_value:.4f}",
+    )
+
+
+def test_run_verdict_counts_by_moment_not_by_clip(tmp_path):
+    _, lines = run_to_lines(tmp_path, DUPLICATED_FIRST_PEAK)
+
+    assert "counted by moment" in lines[-1]
+    assert "hits 2/2" in lines[-1]
+
+
+def test_run_without_repeated_clips_gives_the_same_count_in_both_tables(tmp_path):
+    _, lines = run_to_lines(tmp_path, NEAR_PEAKS)
+
+    assert table_rows(lines) == table_rows(lines, "By clip:")
 
 
 def test_run_writes_only_to_the_given_stream(tmp_path, capsys):
@@ -689,7 +770,7 @@ def test_run_reports_the_window_size_of_the_config(tmp_path):
     )
 
     assert lines[0] == "Chat: 1308 messages, 5967 window positions"
-    assert lines[2].startswith("Config: window 30 s, baseline global (median")
+    assert lines[3].startswith("Config: window 30 s, baseline global (median")
 
 
 def test_main_exits_zero_on_pass(tmp_path, capsys):
@@ -715,8 +796,8 @@ def test_main_defaults_to_k_twenty_and_window_sixty(tmp_path, capsys):
 
     lines = capsys.readouterr().out.splitlines()
     assert code == EXIT_OK
-    assert lines[2].startswith("Config: window 60 s")
-    assert lines[3] == "Random baseline: 20 trials, seed 1"
+    assert lines[3].startswith("Config: window 60 s")
+    assert lines[4] == "Random baseline: 20 trials, seed 1"
     assert lines[-1].startswith("Verdict (hits@20 ")
     assert [row[0] for row in table_rows(lines)] == ["5", "10", "20", "40"]
 
